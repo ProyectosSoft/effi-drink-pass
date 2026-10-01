@@ -12,12 +12,12 @@ import { Button, EmptyState, Spinner } from './ui'
 export function Logo({ compact }: { compact?: boolean }) {
   return (
     <Link to="/" className="flex items-center gap-2.5 font-bold tracking-tight">
-      <span className="brand-gradient grid size-9 place-items-center rounded-xl text-bg shadow-lg shadow-brand-2/30">
+      <span className="brand-gradient grid size-9 place-items-center rounded-[10px] text-white shadow-lg shadow-brand-deep/40">
         <GlassWater className="size-5" strokeWidth={2.5} aria-hidden />
       </span>
       {!compact && (
         <span className="leading-tight">
-          <span className="block text-sm">Effi Drink Pass</span>
+          <span className="block text-sm uppercase tracking-wide">Effi Drink Pass</span>
           <span className="block text-[11px] font-medium text-muted">Feria Effix 2026</span>
         </span>
       )}

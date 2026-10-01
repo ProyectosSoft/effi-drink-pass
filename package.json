@@ -22,6 +22,7 @@
     "test:postman": "vitest run --project postman"
   },
   "dependencies": {
+    "@fontsource-variable/montserrat": "^5.3.0",
     "@supabase/supabase-js": "^2.117.2",
     "@tanstack/react-query": "^5.104.0",
     "clsx": "^2.1.1",

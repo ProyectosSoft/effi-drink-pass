@@ -1,24 +1,27 @@
 @import 'tailwindcss';
 
-/* ── Sistema de diseño Effi Drink Pass ─────────────────────────────────────
-   Oscuro "noche de feria": superficies índigo profundo, acento ámbar (bebida)
-   y violeta. Contrastes AA en texto normal. */
+/* ── Sistema de diseño Effi Drink Pass — línea gráfica de Grupo Effi ─────────
+   (grupoeffi.com): azul noche #01121D / #002047, azules corporativos #005A98,
+   #277EB5, #49AAD9, #00C0FF, amarillo #F3C100, texto blanco y gris #CACACA,
+   tipografía Montserrat, botones en mayúsculas con degradado azul vertical y
+   esquinas inferiores redondeadas. Contrastes AA en texto normal. */
 @theme {
-  --color-bg: #0b0b14;
-  --color-surface: #141424;
-  --color-surface-2: #1c1c30;
-  --color-line: #2a2a42;
-  --color-ink: #f3f3f8;
-  --color-muted: #a3a3bd;
-  --color-faint: #6e6e8a;
-  --color-brand: #ffc53d;
-  --color-brand-2: #ff7a45;
-  --color-accent: #8b7cff;
+  --color-bg: #01121d;
+  --color-surface: #061e33;
+  --color-surface-2: #0a2a47;
+  --color-line: #17405f;
+  --color-ink: #ffffff;
+  --color-muted: #cacaca;
+  --color-faint: #8ca5ba;
+  --color-brand: #49aad9;
+  --color-brand-2: #00c0ff;
+  --color-brand-deep: #005a98;
+  --color-accent: #f3c100;
   --color-ok: #22c55e;
   --color-warn: #f59e0b;
   --color-bad: #ef4444;
   --color-info: #38bdf8;
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-sans: 'Montserrat Variable', 'Montserrat', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --font-mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
   --radius-xl2: 1.25rem;
 }
@@ -43,24 +46,30 @@
 }
 
 @layer components {
+  /* Degradado de botones de grupoeffi.com (y su estado hover). */
   .brand-gradient {
-    background-image: linear-gradient(135deg, var(--color-brand), var(--color-brand-2));
+    background-image: linear-gradient(180deg, #00497c 40%, #49aad9 100%);
   }
+  .brand-gradient-hover:hover:not(:disabled) {
+    background-image: linear-gradient(180deg, #277eb5 20%, #00c0ff 100%);
+  }
+  /* Palabras destacadas en titulares: amarillo Effi. */
   .brand-text {
-    background-image: linear-gradient(135deg, var(--color-brand), var(--color-brand-2));
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--color-accent);
+  }
+  /* Esquina característica de los botones Effi: solo abajo. */
+  .effi-corner {
+    border-radius: 0 0 15px 15px;
   }
   .glow {
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand) 25%, transparent),
-      0 20px 60px -20px color-mix(in srgb, var(--color-brand-2) 45%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand) 30%, transparent),
+      0 24px 60px -24px color-mix(in srgb, var(--color-brand-2) 45%, transparent);
   }
   .card {
-    @apply rounded-2xl border border-line bg-surface;
+    @apply rounded-[15px] border border-line bg-surface;
   }
   .input {
-    @apply w-full rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-sm text-ink placeholder:text-faint
+    @apply w-full rounded-[10px] border border-line bg-surface-2 px-3.5 py-2.5 text-sm text-ink placeholder:text-faint
       transition focus:border-brand focus:outline-none disabled:opacity-60;
   }
   .label {

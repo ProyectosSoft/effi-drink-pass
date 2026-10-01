@@ -9,11 +9,11 @@ import type { BenefitStatus } from '@/lib/types'
 // ───────────────────────────── Button ───────────────────────────────────────
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success'
 const variants: Record<Variant, string> = {
-  primary: 'brand-gradient text-bg font-semibold hover:brightness-110 shadow-lg shadow-brand-2/20',
+  primary: 'brand-gradient brand-gradient-hover effi-corner text-white font-bold uppercase tracking-wide shadow-lg shadow-brand-deep/30',
   secondary: 'bg-surface-2 text-ink border border-line hover:border-muted',
   ghost: 'text-muted hover:text-ink hover:bg-surface-2',
   danger: 'bg-bad/15 text-bad border border-bad/40 hover:bg-bad/25',
-  success: 'bg-ok text-bg font-semibold hover:brightness-110',
+  success: 'bg-ok text-bg font-bold uppercase tracking-wide hover:brightness-110',
 }
 
 export function Button({
@@ -24,11 +24,12 @@ export function Button({
       {...rest}
       disabled={disabled || loading}
       className={clsx(
-        'inline-flex items-center justify-center gap-2 rounded-xl transition select-none disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center justify-center gap-2 transition select-none disabled:cursor-not-allowed disabled:opacity-50',
         size === 'sm' && 'px-3 py-1.5 text-xs',
         size === 'md' && 'px-4 py-2.5 text-sm',
         size === 'lg' && 'px-5 py-3 text-base',
         size === 'xl' && 'px-6 py-5 text-lg font-bold',
+        variant !== 'primary' && 'rounded-[10px]',
         variants[variant],
         className,
       )}

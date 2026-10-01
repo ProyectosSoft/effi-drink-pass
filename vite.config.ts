@@ -45,8 +45,8 @@ export default defineConfig(({ mode }) => {
           short_name: 'Drink Pass',
           description: 'Beneficios de bebidas de la Feria Effix 2026',
           lang: 'es-CO',
-          theme_color: '#0b0b14',
-          background_color: '#0b0b14',
+          theme_color: '#01121d',
+          background_color: '#01121d',
           display: 'standalone',
           orientation: 'portrait',
           start_url: base,
@@ -62,7 +62,7 @@ export default defineConfig(({ mode }) => {
           // Solo se precachea el "app shell". Las llamadas a Supabase NUNCA se cachean:
           // validar/consumir exige conexión (no hay consumo offline).
           globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
-          globIgnores: ['**/ApiDocs-*', '**/swagger*'],
+          globIgnores: ['**/ApiDocs-*', '**/swagger*', '**/montserrat-*cyrillic*', '**/montserrat-vietnamese*'],
           navigateFallback: `${base}index.html`,
           runtimeCaching: [],
           cleanupOutdatedCaches: true,

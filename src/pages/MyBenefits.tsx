@@ -101,7 +101,7 @@ function DayCard({ row, isToday, onOpen }: { row: Row; isToday: boolean; onOpen:
   const canOpen = row.benefit_id && (row.display_status === 'AVAILABLE' || row.display_status === 'UPCOMING')
   return (
     <li className={clsx('card flex items-center gap-4 p-4', isToday && 'border-brand/60')}>
-      <div className={clsx('grid size-12 shrink-0 place-items-center rounded-xl text-lg font-bold', isToday ? 'brand-gradient text-bg' : 'bg-surface-2')}>
+      <div className={clsx('grid size-12 shrink-0 place-items-center rounded-xl text-lg font-bold', isToday ? 'brand-gradient text-white' : 'bg-surface-2')}>
         {row.event_day.date.slice(8, 10)}
       </div>
       <div className="min-w-0 flex-1">

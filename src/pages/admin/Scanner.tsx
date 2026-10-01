@@ -201,7 +201,7 @@ export default function Scanner() {
           {(['confirm', 'auto'] as const).map((m) => (
             <button key={m} role="radio" aria-checked={effectiveMode === m} disabled={!canRedeem && m === 'auto'}
               onClick={() => { unlockAudio(); setMode(m) }}
-              className={clsx('rounded-lg px-3 py-2 transition disabled:opacity-40', effectiveMode === m ? 'brand-gradient text-bg' : 'text-muted')}>
+              className={clsx('rounded-lg px-3 py-2 transition disabled:opacity-40', effectiveMode === m ? 'brand-gradient text-white' : 'text-muted')}>
               {m === 'confirm' ? 'Confirmación' : 'Automático'}
             </button>
           ))}
@@ -395,7 +395,7 @@ function CameraView({ active, onDecode }: { active: boolean; onDecode: (data: st
       <div className="absolute top-3 right-3 flex gap-2">
         {hasFlash && (
           <button aria-label="Linterna" aria-pressed={flashOn} onClick={async () => { await scannerRef.current?.toggleFlash(); setFlashOn(scannerRef.current?.isFlashOn() ?? false) }}
-            className={clsx('rounded-full p-3 backdrop-blur', flashOn ? 'bg-brand text-bg' : 'bg-black/50 text-white')}>
+            className={clsx('rounded-full p-3 backdrop-blur', flashOn ? 'bg-accent text-bg' : 'bg-black/50 text-white')}>
             <Flashlight className="size-5" />
           </button>
         )}

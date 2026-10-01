@@ -17,8 +17,8 @@ export function Landing() {
 
   return (
     <PublicShell>
-      <section className="relative overflow-hidden py-14 sm:py-24">
-        <div aria-hidden className="pointer-events-none absolute -top-40 left-1/2 size-[36rem] -translate-x-1/2 rounded-full bg-brand-2/20 blur-3xl" />
+      <section className="relative -mx-4 overflow-hidden px-4 py-14 sm:mx-0 sm:px-0 sm:py-24">
+        <div aria-hidden className="pointer-events-none absolute -top-40 left-1/2 size-[26rem] -translate-x-1/2 rounded-full bg-brand-2/20 blur-3xl sm:size-[36rem]" />
         <div className="relative mx-auto max-w-3xl text-center">
           <p className="mb-4 inline-flex rounded-full border border-line bg-surface px-3 py-1 text-xs text-muted">Feria Effix 2026</p>
           <h1 className="text-4xl font-extrabold tracking-tight text-balance sm:text-6xl">
