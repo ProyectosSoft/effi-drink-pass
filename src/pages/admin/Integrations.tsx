@@ -3,6 +3,7 @@ import { BookOpen, KeyRound, Plus, RotateCw, ShieldAlert } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { Badge, Button, Card, Checkbox, ConfirmDialog, CopyButton, EmptyState, ErrorBox, Field, Input, Modal, PageHeader, Spinner, Textarea, useToast } from '@/components/ui'
+import { WebhooksSection } from '@/components/WebhooksSection'
 import { apiBaseUrl } from '@/lib/config'
 import { fmtDateTime } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
@@ -92,6 +93,7 @@ export default function Integrations() {
                 </tbody>
               </table>
             </div>
+            <WebhooksSection integrationId={i.id} canSubscribe={i.allowed_scopes.includes('consumptions:read')} />
           </Card>
         )
       })}

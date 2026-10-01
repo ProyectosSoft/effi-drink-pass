@@ -13,6 +13,7 @@ PostgreSQL de Supabase (15+). El esquema completo se reconstruye con las migraci
 | `0007_statistics_reports` | Estadísticas, reportes, vistas `consumption_details` y `benefit_details` |
 | `0008_rls_grants` | RLS y privilegios |
 | `0009_api_reads` | Lecturas de la API v1 y privilegios de funciones `api_*` |
+| `0010_webhooks` | Suscripciones de webhooks, fan-out del outbox, entregas con reintentos, funciones del despachador |
 
 ## Esquemas
 
@@ -33,6 +34,7 @@ PostgreSQL de Supabase (15+). El esquema completo se reconstruye con las migraci
 | `api_integrations`, `api_credentials` | Consumidores externos | Solo el hash SHA-256 del secreto |
 | `audit_logs` | Auditoría | **Inmutable**; sin FKs para sobrevivir a cualquier cambio |
 | `app_settings` | Configuración visible | Modo del scanner, nombre del evento… |
+| `webhook_subscriptions` | Webhooks de integraciones | Secreto de firma en `private.webhook_secrets`; entregas en `private.webhook_deliveries` |
 
 ### Columnas que ningún cliente puede leer
 
@@ -57,7 +59,8 @@ PostgreSQL de Supabase (15+). El esquema completo se reconstruye con las migraci
 | `create_integration`, `update_integration`, `create_api_credential`, `revoke_api_credential`, `rotate_api_credential` | `integrations:manage` | Integraciones |
 | `get_statistics(filters)` | `statistics:read` | Dashboard |
 | `get_report(kind, filters)` | `reports:read` | Reportes CSV |
-| `api_*` | solo `service_role` | Edge Function |
+| `create_webhook_subscription`, `update_webhook_subscription`, `rotate_webhook_secret`, `list_webhook_deliveries`, `retry_webhook_delivery` | `integrations:manage` | Webhooks |
+| `api_*`, `webhooks_claim`, `webhooks_report` | solo `service_role` | Edge Functions |
 
 ## Reloj
 
@@ -68,4 +71,4 @@ PostgreSQL de Supabase (15+). El esquema completo se reconstruye con las migraci
 - `private.rate_limits` se limpia sola (ventanas > 2 h).
 - `private.idempotency_keys` expira a las 48 h (se purga al reutilizar la clave). Limpieza opcional:
   `delete from private.idempotency_keys where expires_at < now();`
-- Recomendado (opcional) con `pg_cron`: `select cron.schedule('expire-benefits', '5 * * * *', 'select public.expire_benefits()');`
+- `supabase/scripts/schedule_webhooks.sql` programa con `pg_cron` el despachador de webhooks (cada minuto) y `expire_benefits()` (cada hora).

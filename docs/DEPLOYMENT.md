@@ -31,7 +31,13 @@ GitHub Pages solo sirve archivos estáticos: no se ejecuta backend allí.
    ```
    `--no-verify-jwt` es necesario: la API hace su propia autenticación (OAuth2/API key/JWT). `SUPABASE_URL`, `SUPABASE_ANON_KEY` y `SUPABASE_SERVICE_ROLE_KEY` los inyecta Supabase.
    Probar: `curl https://<REF>.supabase.co/functions/v1/api/v1/health`.
-6. **Primer Super Admin**: editar el email en `supabase/scripts/bootstrap_super_admin.sql` y ejecutarlo en el SQL Editor. Luego esa persona entra por `/login` con código por email.
+6. **Webhooks** (opcional; solo si alguna integración los usará):
+   ```bash
+   supabase secrets set WEBHOOK_DISPATCHER_SECRET="<48 bytes aleatorios en base64url>"
+   supabase functions deploy webhooks --no-verify-jwt
+   ```
+   Habilitar **pg_cron** y **pg_net** (Database → Extensions) y ejecutar `supabase/scripts/schedule_webhooks.sql` con la URL y el mismo secreto. También programa `expire_benefits()` cada hora.
+7. **Primer Super Admin**: editar el email en `supabase/scripts/bootstrap_super_admin.sql` y ejecutarlo en el SQL Editor. Luego esa persona entra por `/login` con código por email.
 
 ## 2. GitHub Pages (frontend)
 
@@ -61,7 +67,7 @@ GitHub Pages solo sirve archivos estáticos: no se ejecuta backend allí.
 | `deploy-pages.yml` | push a `main` / manual | pruebas + build + publicación en Pages |
 | `deploy-supabase.yml` | **manual** | `supabase db push` + secrets + `functions deploy api` |
 
-Secrets para `deploy-supabase.yml`: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`, `API_JWT_SECRET`. Variable opcional: `API_ALLOWED_ORIGINS`. Se recomienda proteger el environment `production` con aprobación manual.
+Secrets para `deploy-supabase.yml`: `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD`, `API_JWT_SECRET`, `WEBHOOK_DISPATCHER_SECRET`. Variable opcional: `API_ALLOWED_ORIGINS`. Se recomienda proteger el environment `production` con aprobación manual.
 
 ## 4. Desarrollo local
 

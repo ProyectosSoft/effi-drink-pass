@@ -55,9 +55,10 @@ info:
     `Idempotent-Replayed: true`; con parámetros distintos devuelve `422 IDEMPOTENCY_KEY_REUSED`.
     Las claves son por credencial y se conservan 48 h.
 
-    ## Webhooks (preparado)
-    Cada consumo genera el evento de dominio `benefit.consumed` en un *outbox* transaccional.
-    La entrega a suscriptores externos se habilitará en una versión futura sin cambios de contrato.
+    ## Webhooks
+    Las integraciones con `consumptions:read` pueden suscribir una URL HTTPS al evento `benefit.consumed`
+    (Admin → Integraciones). Entrega firmada (`X-EDP-Signature: t=…,v1=HMAC-SHA256`), at-least-once,
+    con reintentos durante ≈ 10 h. Detalle y verificación de firma en docs/INTEGRATIONS.md.
   contact:
     name: Effi Drink Pass
   license:

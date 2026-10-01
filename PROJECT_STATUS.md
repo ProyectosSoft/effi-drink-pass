@@ -1,12 +1,12 @@
 # Estado del proyecto — Effi Drink Pass
 
-Fecha: 29/09/2026.
+Última actualización: 01/10/2026.
 
 ## Funcionalidades terminadas
 
 | Área | Estado |
 |---|---|
-| Base de datos (9 migraciones, reconstruible) | ✅ |
+| Base de datos (10 migraciones, reconstruible) | ✅ |
 | RLS en todas las tablas + RBAC (5 roles, 18 permisos, anti-escalamiento) | ✅ |
 | Auth propia (asistentes con código OTP; staff con OTP o contraseña; vinculación por email verificado) | ✅ |
 | Asistentes: CRUD, elegibilidad por día, `effi_id`/`effi_username` opcionales | ✅ |
@@ -25,12 +25,12 @@ Fecha: 29/09/2026.
 | OpenAPI 3.1 + Swagger UI (`/api-docs`) | ✅ |
 | Postman: colección (50 requests) + environment, verificada con Newman | ✅ |
 | Auditoría inmutable de todos los eventos importantes | ✅ |
-| Outbox de eventos para webhooks (`benefit.consumed`) | ✅ (despachador pendiente) |
+| Webhooks salientes `benefit.consumed`: suscripciones por integración, firma HMAC, reintentos con backoff, panel de entregas, despachador programado (Edge Function `webhooks` + pg_cron) | ✅ |
 | PWA instalable (app shell en caché; nunca cachea la API) | ✅ |
 | GitHub Actions: CI, deploy Pages, deploy Supabase (manual) | ✅ |
 | Documentación (`docs/`) | ✅ |
 
-**Pruebas automatizadas** (`npm test`): 139 pruebas en verde — unitarias; API HTTP end-to-end sobre PostgreSQL real (auth, scopes, 400–429, idempotencia, CORS, admin); base de datos (migraciones, privilegios, RLS, roles, CRUD, importación, beneficios, QR, consumo, doble consumo, inmutabilidad, idempotencia, integraciones, rate limit, lecturas API, scripts). Más `npm run test:postman` (colección completa, 0 fallos).
+**Pruebas automatizadas** (`npm test`): 152 pruebas en verde — unitarias; API HTTP end-to-end sobre PostgreSQL real (auth, scopes, 400–429, idempotencia, CORS, admin); base de datos (migraciones, privilegios, RLS, roles, CRUD, importación, beneficios, QR, consumo, doble consumo, inmutabilidad, idempotencia, integraciones, rate limit, lecturas API, scripts, webhooks) y despachador de webhooks (firma, reintentos, timeouts, destinos bloqueados). Más `npm run test:postman` (colección completa, 0 fallos).
 
 ## Pendiente / no verificado aún
 
@@ -39,8 +39,7 @@ Fecha: 29/09/2026.
 | Crear el proyecto Supabase y el repositorio GitHub | No existían; deben crearse (pasos abajo) |
 | Prueba de concurrencia contra Supabase real | Escrita (`tests/integration/concurrency.test.ts`); requiere staging y variables `E2E_*`. En PGlite (una conexión) la concurrencia real no se puede simular; la garantía está en el diseño SQL y en las pruebas de integridad |
 | Prueba visual del frontend en dispositivos reales | El frontend compila y los tipos pasan, pero **no se ha ejecutado en un navegador contra un Supabase real** (no había proyecto). Probar scanner en Android, iPhone y tablet antes de la feria |
-| Despachador de webhooks | Arquitectura y outbox listos; entrega a terceros no implementada (ver [docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)) |
-| `pg_cron` para expirar beneficios | Opcional (el estado efectivo ya se calcula) |
+| Programar el despachador de webhooks | Requiere habilitar pg_cron/pg_net y ejecutar `supabase/scripts/schedule_webhooks.sql` en el proyecto real (solo si alguna integración usará webhooks) |
 | Fechas oficiales del evento | Se configuran en Admin → Configuración. El seed usa 15–19/10/2026 **solo como ejemplo** |
 | SMTP propio y plantillas de email con código | Configuración manual en Supabase |
 
@@ -56,6 +55,7 @@ Fecha: 29/09/2026.
 | `PAGES_BASE_PATH` | GitHub Variables (opcional) | Sí |
 | `API_JWT_SECRET` | Supabase secrets (+ GitHub Secret para el workflow) | **No** |
 | `API_ALLOWED_ORIGINS` | Supabase secrets | — |
+| `WEBHOOK_DISPATCHER_SECRET` | Supabase secrets + Vault (schedule_webhooks.sql) | **No** |
 | `SUPABASE_SERVICE_ROLE_KEY` | Solo inyectada por Supabase en la Edge Function | **No — nunca en el frontend ni en el repo** |
 | `SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROJECT_REF`, `SUPABASE_DB_PASSWORD` | GitHub Secrets (workflow de deploy) | **No** |
 

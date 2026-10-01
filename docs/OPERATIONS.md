@@ -44,7 +44,8 @@ No hay consumo offline (por diseño: no se puede garantizar un solo consumo sin 
 
 - Dashboard (se refresca cada 30 s): consumos de hoy, por hora, por operador, por tipo de acceso.
 - Consumos (cada 20 s) y Auditoría (filtrar `FAILED_REDEEM`, `API_AUTH_FAILED`).
-- Supabase Dashboard → Logs: Edge Function `api` (líneas JSON con `request_id`), Postgres, Auth.
+- Supabase Dashboard → Logs: Edge Functions `api` (líneas JSON con `request_id`) y `webhooks` (resumen por ejecución), Postgres, Auth.
+- Admin → Integraciones → Webhooks → *Entregas*: entregas fallidas por integración (reintentables).
 
 ## Cierre del día / evento
 

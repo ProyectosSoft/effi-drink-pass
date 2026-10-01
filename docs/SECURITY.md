@@ -21,6 +21,7 @@
 | Auditoría | `audit_logs` inmutable (triggers bloquean UPDATE/DELETE/TRUNCATE) |
 | Consumos | Inmutables; imposible doble consumo (lock + UPDATE condicional + UNIQUE + máquina de estados) |
 | Hora | Siempre la del servidor; override de reloj solo en pruebas |
+| Webhooks | Solo HTTPS a hosts públicos con nombre (sin IPs, `localhost` ni dominios internos), sin seguir redirecciones, timeout 10 s; firma HMAC-SHA256 con timestamp; secreto por suscripción y rotable; despachador autenticado con `WEBHOOK_DISPATCHER_SECRET` guardado en Vault |
 | Cabeceras API | `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, `X-Request-Id` |
 | Tamaño | Cuerpos > 64 KB → 413; importación ≤ 1000 filas por lote |
 | Dependencias | `npm audit` sin vulnerabilidades en dependencias de producción (29/09/2026) |

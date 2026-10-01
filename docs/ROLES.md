@@ -60,7 +60,7 @@ No tienen rol: su acceso se deriva de `attendees.auth_user_id`. RLS les permite 
 | `user_roles` | uno mismo · `users:manage` |
 | `roles`, `permissions`, `role_permissions`, `app_settings` | cualquier usuario autenticado |
 | `event_days` | público (incluido anónimo) |
-| `api_integrations`, `api_credentials` (sin hash) | `integrations:manage` |
+| `api_integrations`, `api_credentials` (sin hash), `webhook_subscriptions` (sin secreto) | `integrations:manage` |
 | `audit_logs` | `audit:read` |
 
 Ninguna tabla tiene políticas de INSERT/UPDATE/DELETE para clientes. RLS está habilitado en **todas** las tablas.

@@ -43,7 +43,7 @@ No existe ni `Effi → base de datos` ni `Drink Pass → Effi`.
 | **Tokens QR por HMAC; solo se guarda el hash** | Ver [QR.md](QR.md). |
 | **Hora oficial = `now()` del servidor en America/Bogota** | El navegador nunca decide la fecha del beneficio. |
 | **Permisos = scopes** (mismo vocabulario) | Un staff con JWT y una integración se autorizan igual en la API. |
-| **Outbox transaccional** (`private.event_outbox`) | Base para webhooks (`benefit.consumed`) sin afectar la operación. |
+| **Outbox transaccional + despachador** (`private.event_outbox` → Edge Function `webhooks`) | Webhooks firmados (`benefit.consumed`) con reintentos, sin que la barra espere a terceros. |
 | **Sin consumo offline** | Un consumo sin servidor no puede garantizar unicidad. El scanner muestra *SIN CONEXIÓN — NO ES POSIBLE CONFIRMAR EL CONSUMO* y permite reintentar de forma segura con la misma `Idempotency-Key`. |
 
 ## Componentes
@@ -52,8 +52,9 @@ No existe ni `Effi → base de datos` ni `Drink Pass → Effi`.
 |---|---|
 | `src/` | Frontend React 19 + TypeScript + Tailwind 4 + React Query + React Router 7 |
 | `src/pages/admin/Scanner.tsx` | Scanner (qr-scanner) con máquina de estados, modos automático/confirmación |
-| `supabase/migrations/` | Esquema completo, reconstruible desde cero (9 migraciones) |
+| `supabase/migrations/` | Esquema completo, reconstruible desde cero (10 migraciones) |
 | `supabase/functions/api/index.ts` | Entrada Deno de la API |
+| `supabase/functions/webhooks/index.ts` | Despachador programado de webhooks |
 | `supabase/functions/_shared/` | Router, auth, JWT, validación (zod), errores, utilidades de QR (compartidas con el frontend) |
 | `supabase/scripts/` | Bootstrap del Super Admin, tokens demo, limpieza demo |
 | `tests/` | unit · api (HTTP end-to-end) · db (PostgreSQL real) · postman (Newman) · integration (Supabase real) |

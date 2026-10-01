@@ -61,18 +61,52 @@ Todo queda auditado: `CREATE_INTEGRATION`, `UPDATE_INTEGRATION`, `DISABLE_INTEGR
 - Respetar `429` + `Retry-After` con backoff exponencial.
 - Enviar `X-Request-Id` propio para correlacionar logs.
 
-## Webhooks (preparado)
+## Webhooks
 
-Cada consumo inserta el evento `benefit.consumed` en `private.event_outbox` dentro de la misma transacción:
+Notificaciones salientes casi en tiempo real (≤ 1 min) cuando ocurre un evento. Evento disponible: **`benefit.consumed`**.
 
-```json
-{ "benefit_id": "…", "attendee_id": "…", "effi_id": "123456", "event_day": "2026-10-16",
-  "consumption_id": "…", "consumed_at": "…", "is_override": false }
+### Configuración (Admin → Integraciones → Webhooks)
+
+- Requisito: la integración debe tener el scope `consumptions:read` (el evento contiene datos de consumo).
+- URL **HTTPS** a un host público con nombre (se rechazan IPs, `localhost` y dominios internos).
+- Al crear (o rotar) se muestra **una vez** el secreto de firma `whsec_…`.
+- Se puede pausar/activar, ver las últimas entregas (estado, intentos, código HTTP, error) y reintentar las fallidas.
+
+### Entrega
+
+```http
+POST <url>
+Content-Type: application/json
+User-Agent: EffiDrinkPass-Webhooks/1.0
+X-EDP-Event: benefit.consumed
+X-EDP-Delivery: 1234
+X-EDP-Attempt: 1
+X-EDP-Signature: t=1792162805,v1=5f2b…(hex)
+
+{ "id": "evt_987", "type": "benefit.consumed", "created_at": "2026-10-16T15:00:00Z",
+  "data": { "benefit_id": "…", "attendee_id": "…", "effi_id": "123456", "event_day": "2026-10-16",
+            "consumption_id": "…", "consumed_at": "…", "is_override": false } }
 ```
 
-Diseño previsto para la entrega (no implementado todavía):
-1. Tabla `webhook_subscriptions` (integración, URL HTTPS, eventos, secreto de firma cifrado).
-2. Edge Function programada que lee el outbox (`dispatched_at is null`), firma con HMAC-SHA256 (`X-EDP-Signature`), reintenta con backoff (`attempts`, `last_error`) y marca `dispatched_at`.
-3. Entrega *at-least-once*; el receptor deduplica por `consumption_id`.
+- Éxito = respuesta **2xx en ≤ 10 s**. No se siguen redirecciones.
+- Fallo → reintentos con espera creciente: 30 s, 2 min, 10 min, 30 min, 1 h, 3 h, 6 h (8 intentos, ≈ 10 h). Luego queda `failed` y se puede reintentar desde el panel.
+- Entrega **at-least-once**: deduplicar por `X-EDP-Delivery` o `data.consumption_id`.
+- El orden no está garantizado; use `data.consumed_at`.
 
-Así la operación del scanner nunca depende de que un tercero responda.
+### Verificar la firma (receptor)
+
+`v1 = hex(HMAC-SHA256(secreto, "<t>.<cuerpo crudo>"))`. Compare en tiempo constante y rechace `t` con más de 5 minutos de diferencia.
+
+```js
+import crypto from 'node:crypto'
+function verify(secret, header, rawBody) {
+  const { t, v1 } = Object.fromEntries(header.split(',').map((p) => p.split('=')))
+  if (Math.abs(Date.now() / 1000 - Number(t)) > 300) return false
+  const expected = crypto.createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex')
+  return v1?.length === expected.length && crypto.timingSafeEqual(Buffer.from(v1), Buffer.from(expected))
+}
+```
+
+### Arquitectura
+
+Consumo → `private.event_outbox` (misma transacción) → trigger de *fan-out* → `private.webhook_deliveries` (una por suscripción) → Edge Function **`webhooks`** invocada cada minuto por `pg_cron` → `webhooks_claim` (lotes con `FOR UPDATE SKIP LOCKED` y arriendo) → POST firmado → `webhooks_report` (backoff). La operación del scanner nunca espera a un tercero. Programación: `supabase/scripts/schedule_webhooks.sql`.
