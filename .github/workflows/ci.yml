@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (app + Edge Functions)
+        run: npm run typecheck
+      - name: Tests (unit + API end-to-end + PostgreSQL con migraciones reales)
+        run: npm test
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://ci-placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: ci-placeholder
+      - name: Buscar secretos accidentales en el bundle
+        run: |
+          if grep -rEl "sb_secret_[A-Za-z0-9]{8,}|c2VydmljZV9yb2xl|NlcnZpY2Vfcm9sZ|zZXJ2aWNlX3JvbG" dist/; then
+            echo "::error::El bundle contiene referencias a secretos"; exit 1
+          fi

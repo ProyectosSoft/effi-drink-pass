@@ -1,0 +1,53 @@
+name: Deploy Supabase (migraciones + Edge Function)
+
+# Ejecución MANUAL (Actions → Deploy Supabase → Run workflow) para controlar cuándo cambia la base de datos.
+# Secrets del repositorio (Settings → Secrets and variables → Actions → Secrets):
+#   SUPABASE_ACCESS_TOKEN   token personal de Supabase (Account → Access Tokens)
+#   SUPABASE_PROJECT_REF    ref del proyecto (xxxxxxxxxxxxxxxxxxxx)
+#   SUPABASE_DB_PASSWORD    contraseña de la base de datos
+#   API_JWT_SECRET          secreto HS256 de la API (>= 32 caracteres aleatorios)
+# Variable: API_ALLOWED_ORIGINS (orígenes CORS de la API, coma-separados; opcional)
+
+on:
+  workflow_dispatch:
+    inputs:
+      push_migrations:
+        description: Aplicar migraciones pendientes (supabase db push)
+        type: boolean
+        default: true
+      deploy_function:
+        description: Desplegar la Edge Function "api"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - name: Vincular proyecto
+        run: supabase link --project-ref "$PROJECT_REF" --password "$SUPABASE_DB_PASSWORD"
+      - name: Migraciones
+        if: ${{ inputs.push_migrations }}
+        run: supabase db push --password "$SUPABASE_DB_PASSWORD"
+      - name: Secrets de la Edge Function
+        if: ${{ inputs.deploy_function }}
+        run: |
+          supabase secrets set --project-ref "$PROJECT_REF" \
+            API_JWT_SECRET="${{ secrets.API_JWT_SECRET }}" \
+            API_ALLOWED_ORIGINS="${{ vars.API_ALLOWED_ORIGINS }}"
+      - name: Edge Function api
+        if: ${{ inputs.deploy_function }}
+        run: supabase functions deploy api --project-ref "$PROJECT_REF" --no-verify-jwt

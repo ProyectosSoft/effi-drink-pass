@@ -1,0 +1,38 @@
+# Configuración para Supabase CLI (desarrollo local con `supabase start`).
+# En el proyecto hospedado, los equivalentes se configuran en el Dashboard (ver docs/DEPLOYMENT.md).
+project_id = "effi-drink-pass"
+
+[api]
+enabled = true
+port = 54321
+# Solo el esquema public se expone por PostgREST. `private` NUNCA debe agregarse aquí.
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+major_version = 15
+
+[db.seed]
+enabled = true
+sql_paths = ["./seed.sql"]
+
+[auth]
+enabled = true
+site_url = "http://localhost:5173"
+additional_redirect_urls = ["http://localhost:5173/login", "http://localhost:5173/"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+enable_signup = true
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+double_confirm_changes = true
+otp_length = 6
+otp_expiry = 900
+
+[functions.api]
+# La API hace su propia autenticación (OAuth2 client_credentials / API key / JWT de staff).
+verify_jwt = false

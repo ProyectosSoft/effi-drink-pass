@@ -1,0 +1,1002 @@
+openapi: 3.1.0
+info:
+  title: Effi Drink Pass API
+  version: 1.0.0
+  summary: API pública de beneficios de bebidas — Feria Effix 2026
+  description: |
+    API REST **independiente** de Effi Drink Pass. Effi (u otro sistema: registro, boletería,
+    apps móviles) es solo un **consumidor externo opcional**: nunca accede a la base de datos
+    y el sistema funciona aunque ninguna integración exista.
+
+    ## Autenticación
+    Tres mecanismos (usar uno por request):
+
+    | Mecanismo | Uso | Cabecera |
+    |---|---|---|
+    | **OAuth2 client credentials** (recomendado) | Integraciones | `Authorization: Bearer <access_token>` obtenido en `POST /v1/oauth/token` |
+    | **API key** | Integraciones simples / pruebas | `X-API-Key: <client_id>.<client_secret>` |
+    | **JWT de Supabase Auth** | Staff (herramientas administrativas) | `Authorization: Bearer <jwt de usuario>` |
+
+    Las credenciales se crean en **Admin → Integraciones** con los *scopes mínimos*.
+    El `client_secret` se muestra una sola vez; el servidor solo guarda su hash SHA-256.
+    Revocar o rotar una credencial invalida de inmediato también los access tokens emitidos.
+
+    ## Scopes
+    `attendees:read`, `attendees:write`, `event-days:read`, `benefits:read`, `benefits:write`,
+    `benefits:validate`, `benefits:redeem`, `consumptions:read`, `statistics:read`.
+    Los scopes administrativos (`integrations:manage`, `users:manage`, …) **nunca** se asignan a integraciones.
+
+    ## Convenciones
+    - Respuestas exitosas: `{ "data": … }` (+ `meta` en listados paginados).
+    - Errores: `{ "error": { "code", "message", "details?", "request_id" } }`. Excepción: `/v1/oauth/token` usa el formato RFC 6749 (`error`, `error_description`).
+    - Paginación: `page` (desde 1) y `page_size` (1–200, por defecto 50). `meta = { page, page_size, total, total_pages }`.
+    - Fechas: ISO 8601. Los días del evento y horarios están en **America/Bogota**; la hora oficial es la del servidor.
+    - `X-Request-Id`: se devuelve siempre; puede enviarse uno propio (8–100 caracteres `[A-Za-z0-9_.:-]`).
+    - Los tokens de QR nunca se exponen por la API; solo se pueden **enviar** para validar/consumir.
+
+    ## Rate limiting
+    Ventanas fijas de 60 s por credencial (o por IP si no hay credencial):
+
+    | Grupo | Límite |
+    |---|---|
+    | `oauth/token` | 20/min por credencial + bloqueo de 5 min tras 20 fallos por IP |
+    | Lecturas por id | 240/min |
+    | Búsquedas / listados | 120/min |
+    | Validación / consumo | 180/min |
+    | Escrituras | 60/min |
+    | Estadísticas | 30/min |
+    | Administración | 30/min |
+
+    Cabeceras: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (epoch s) y `Retry-After` en 429.
+
+    ## Idempotencia
+    `POST /v1/benefits/{id}/redeem` y `POST /v1/benefits/redeem` aceptan `Idempotency-Key` (8–255 caracteres).
+    Un reintento con la misma clave y los mismos parámetros devuelve la respuesta original con
+    `Idempotent-Replayed: true`; con parámetros distintos devuelve `422 IDEMPOTENCY_KEY_REUSED`.
+    Las claves son por credencial y se conservan 48 h.
+
+    ## Webhooks (preparado)
+    Cada consumo genera el evento de dominio `benefit.consumed` en un *outbox* transaccional.
+    La entrega a suscriptores externos se habilitará en una versión futura sin cambios de contrato.
+  contact:
+    name: Effi Drink Pass
+  license:
+    name: Propietario
+servers:
+  - url: https://YOUR-PROJECT-REF.supabase.co/functions/v1/api
+    description: Supabase Edge Function (reemplace YOUR-PROJECT-REF)
+security:
+  - oauth2: []
+  - apiKey: []
+  - bearerJwt: []
+tags:
+  - name: Health
+  - name: Auth
+  - name: Event days
+  - name: Attendees
+  - name: Benefits
+  - name: Consumptions
+  - name: Statistics
+  - name: Admin
+    description: Solo staff (JWT de Supabase Auth) con `integrations:manage`.
+
+paths:
+  /v1/health:
+    get:
+      tags: [Health]
+      summary: Estado del servicio
+      security: []
+      responses:
+        '200':
+          description: Servicio y base de datos disponibles
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+              example: { status: ok, service: effi-drink-pass-api, version: 1.0.0, time: '2026-10-16T15:00:00.000Z', checks: { database: ok } }
+        '503':
+          description: Base de datos no disponible
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /v1/oauth/token:
+    post:
+      tags: [Auth]
+      summary: Obtener access token (OAuth2 client_credentials)
+      description: |
+        Credenciales en el cuerpo (`client_id`, `client_secret`) o en `Authorization: Basic base64(client_id:client_secret)`.
+        `scope` opcional para pedir un subconjunto. Token HS256 con vigencia de 1 hora.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenRequest' }
+            example: { grant_type: client_credentials, client_id: edp_ci_0123456789abcdef01234567, client_secret: edp_sk_…, scope: 'attendees:read benefits:read' }
+      responses:
+        '200':
+          description: Token emitido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        '400':
+          description: '`unsupported_grant_type`, `invalid_scope` o `invalid_request`'
+          content: { application/json: { schema: { $ref: '#/components/schemas/OAuthError' } } }
+        '401':
+          description: '`invalid_client` (credenciales inválidas, revocadas o expiradas)'
+          content: { application/json: { schema: { $ref: '#/components/schemas/OAuthError' } } }
+        '429':
+          description: '`slow_down`'
+          content: { application/json: { schema: { $ref: '#/components/schemas/OAuthError' } } }
+
+  /v1/me:
+    get:
+      tags: [Auth]
+      summary: Identidad y scopes de la credencial actual
+      responses:
+        '200':
+          description: Principal autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      type: { type: string, enum: [integration, user] }
+                      label: { type: string }
+                      scopes: { type: array, items: { type: string } }
+                      integration_id: { type: [string, 'null'], format: uuid }
+                      client_id: { type: [string, 'null'] }
+                      profile_id: { type: [string, 'null'], format: uuid }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/event-days:
+    get:
+      tags: [Event days]
+      summary: Listar días del evento
+      description: 'Scope: `event-days:read`'
+      responses:
+        '200':
+          description: Días ordenados por fecha
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/EventDay' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/event-days/{id}:
+    get:
+      tags: [Event days]
+      summary: Obtener un día del evento
+      description: 'Scope: `event-days:read`'
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Día
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/EventDay' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/attendees:
+    get:
+      tags: [Attendees]
+      summary: Buscar asistentes
+      description: |
+        Scope: `attendees:read`. Para sincronizar con Effi use `effi_id` o `effi_username` (coincidencia exacta).
+        `effi_id` es un identificador **externo opcional**; el identificador del sistema es `id`.
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: effi_id, in: query, schema: { type: string, maxLength: 200 }, example: '123456' }
+        - { name: effi_username, in: query, schema: { type: string, maxLength: 200 }, example: juan.perez }
+        - { name: email, in: query, schema: { type: string, maxLength: 200 } }
+        - { name: q, in: query, description: Texto en nombre o empresa (mín. 2), schema: { type: string, minLength: 2, maxLength: 100 } }
+        - { name: tipo_acceso, in: query, schema: { type: string } }
+        - { name: empresa, in: query, description: Contiene, schema: { type: string } }
+        - { name: activo, in: query, schema: { type: string, enum: ['true', 'false'] } }
+        - { name: event_day_id, in: query, description: Elegibles para ese día, schema: { type: string, format: uuid } }
+        - { name: updated_since, in: query, description: Sincronización incremental, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Página de asistentes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Attendee' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [Attendees]
+      summary: Crear asistente
+      description: |
+        Scope: `attendees:write`. `event_day_ids` define los días elegibles y genera un beneficio (con su QR) por día.
+        Si la credencial no tiene `attendees:read`, la respuesta solo incluye `id`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AttendeeCreate' }
+            example: { nombres: Juan, apellidos: Pérez, email: juan.perez@ejemplo.com, effi_id: '123456', effi_username: juan.perez, tipo_acceso: VIP, empresa: ACME, event_day_ids: [3fa85f64-5717-4562-b3fc-2c963f66afa6] }
+      responses:
+        '201':
+          description: Creado
+          headers: { Location: { schema: { type: string } } }
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AttendeeDetail' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/PayloadTooLarge' }
+        '415': { $ref: '#/components/responses/UnsupportedMediaType' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/attendees/{id}:
+    parameters: [{ $ref: '#/components/parameters/Id' }]
+    get:
+      tags: [Attendees]
+      summary: Obtener asistente (incluye días de elegibilidad)
+      description: 'Scope: `attendees:read`'
+      responses:
+        '200':
+          description: Asistente
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AttendeeDetail' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [Attendees]
+      summary: Actualizar parcialmente
+      description: 'Scope: `attendees:write`. Solo cambian los campos enviados; `null` borra un campo opcional.'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AttendeePatch' }, example: { empresa: Nueva Empresa SAS } } }
+      responses:
+        '200':
+          description: Actualizado
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AttendeeDetail' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    put:
+      tags: [Attendees]
+      summary: Reemplazar datos del asistente
+      description: 'Scope: `attendees:write`. Los campos omitidos quedan vacíos (`nombres` obligatorio).'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/AttendeeCreate' } } }
+      responses:
+        '200':
+          description: Actualizado
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AttendeeDetail' } } } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/attendees/{id}/event-days:
+    put:
+      tags: [Attendees]
+      summary: Definir días elegibles
+      description: 'Scope: `attendees:write`. Reemplaza el conjunto; los días nuevos generan beneficio. Quitar un día marca `eligible=false` (el beneficio no se borra).'
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_day_ids]
+              additionalProperties: false
+              properties:
+                event_day_ids: { type: array, maxItems: 31, items: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Asistente con días actualizados
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/AttendeeDetail' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/attendees/{id}/benefits:
+    get:
+      tags: [Attendees, Benefits]
+      summary: Beneficios de un asistente
+      description: 'Scope: `benefits:read`'
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Beneficios por día
+          content: { application/json: { schema: { type: object, properties: { data: { type: array, items: { $ref: '#/components/schemas/Benefit' } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/benefits:
+    get:
+      tags: [Benefits]
+      summary: Listar beneficios
+      description: 'Scope: `benefits:read`. `status` filtra por estado **efectivo** (un PENDING cuyo día terminó cuenta como EXPIRED).'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: attendee_id, in: query, schema: { type: string, format: uuid } }
+        - { name: event_day_id, in: query, schema: { type: string, format: uuid } }
+        - { name: date, in: query, schema: { type: string, format: date } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/BenefitStatus' } }
+        - { name: effi_id, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Página de beneficios
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Benefit' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/benefits/{id}:
+    get:
+      tags: [Benefits]
+      summary: Estado de un beneficio (con su consumo si existe)
+      description: 'Scope: `benefits:read`'
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Beneficio
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf:
+                      - { $ref: '#/components/schemas/Benefit' }
+                      - type: object
+                        properties:
+                          consumption: { oneOf: [{ $ref: '#/components/schemas/Consumption' }, { type: 'null' }] }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/benefits/{id}/validate:
+    post:
+      tags: [Benefits]
+      summary: Validar un beneficio (sin consumir)
+      description: |
+        Scope: `benefits:validate`. Siempre responde **200** con el resultado (`data.ok`, `data.code`),
+        salvo que el `id` no exista (404). Si se envía `token`, debe corresponder a ese beneficio.
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/BenefitActionBody' } } }
+      responses:
+        '200':
+          description: Resultado de la validación
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: '#/components/schemas/BenefitResult' } } }
+              examples:
+                valido: { value: { data: { ok: true, code: VALID, message: QR VÁLIDO } } }
+                otroDia: { value: { data: { ok: false, code: NOT_TODAY, message: QR NO VÁLIDO PARA HOY } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/benefits/{id}/redeem:
+    post:
+      tags: [Benefits]
+      summary: Consumir (redimir) un beneficio — atómico
+      description: |
+        Scope: `benefits:redeem`. Transición **PENDING → CONSUMED exactamente una vez**, garantizada en PostgreSQL
+        (bloqueo de fila + UPDATE condicional + UNIQUE en consumos). La fecha/hora la determina el servidor (America/Bogota).
+        Use `Idempotency-Key` para reintentos seguros ante fallos de red.
+      parameters:
+        - { $ref: '#/components/parameters/Id' }
+        - { $ref: '#/components/parameters/IdempotencyKey' }
+      requestBody:
+        content: { application/json: { schema: { $ref: '#/components/schemas/BenefitActionBody' } } }
+      responses:
+        '200':
+          description: 'APPROVED — beneficio consumido'
+          headers:
+            Idempotent-Replayed: { schema: { type: string, enum: ['true'] }, description: Presente si es la respuesta de un intento previo }
+          content:
+            application/json:
+              schema: { type: object, properties: { data: { $ref: '#/components/schemas/BenefitResult' } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/RedeemFailed' }
+        '409': { $ref: '#/components/responses/RedeemFailed' }
+        '422': { $ref: '#/components/responses/RedeemFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/benefits/validate:
+    post:
+      tags: [Benefits]
+      summary: Validar por token de QR (estilo scanner)
+      description: 'Scope: `benefits:validate`. `token` acepta el token crudo o la URL del QR (…/qr/<token>). Siempre 200.'
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/TokenActionBody' } } }
+      responses:
+        '200':
+          description: Resultado
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/BenefitResult' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/benefits/redeem:
+    post:
+      tags: [Benefits]
+      summary: Consumir por token de QR (estilo scanner)
+      description: 'Scope: `benefits:redeem`. Mismas garantías y códigos que `/v1/benefits/{id}/redeem`. QR desconocido → 404 `INVALID_QR` sin revelar datos.'
+      parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TokenActionBody' }
+            example: { token: 'https://drinkpass.example.com/qr/AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abcd' }
+      responses:
+        '200':
+          description: APPROVED
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/BenefitResult' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/RedeemFailed' }
+        '409': { $ref: '#/components/responses/RedeemFailed' }
+        '422': { $ref: '#/components/responses/RedeemFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/benefits/generate:
+    post:
+      tags: [Benefits]
+      summary: Generar beneficios faltantes
+      description: 'Scope: `benefits:write`. Crea el beneficio de cada día elegible que aún no lo tenga (idempotente por naturaleza).'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                attendee_ids: { type: array, maxItems: 1000, items: { type: string, format: uuid }, description: Omitir para todos }
+      responses:
+        '200':
+          description: Cantidad creada
+          content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { created: { type: integer } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/consumptions:
+    get:
+      tags: [Consumptions]
+      summary: Listar consumos (historial inmutable)
+      description: 'Scope: `consumptions:read`. Orden: más recientes primero.'
+      parameters:
+        - { $ref: '#/components/parameters/Page' }
+        - { $ref: '#/components/parameters/PageSize' }
+        - { name: attendee_id, in: query, schema: { type: string, format: uuid } }
+        - { name: event_day_id, in: query, schema: { type: string, format: uuid } }
+        - { name: operator_id, in: query, schema: { type: string, format: uuid } }
+        - { name: integration_id, in: query, schema: { type: string, format: uuid } }
+        - { name: effi_id, in: query, schema: { type: string } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to, in: query, description: Exclusivo, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Página de consumos
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Consumption' } }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /v1/consumptions/{id}:
+    get:
+      tags: [Consumptions]
+      summary: Obtener un consumo
+      description: 'Scope: `consumptions:read`'
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '200':
+          description: Consumo
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Consumption' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/statistics:
+    get:
+      tags: [Statistics]
+      summary: Estadísticas agregadas
+      description: 'Scope: `statistics:read`. Límite 30/min.'
+      parameters:
+        - { name: event_day_id, in: query, schema: { type: string, format: uuid } }
+        - { name: date_from, in: query, description: Fecha Bogotá del consumo, schema: { type: string, format: date } }
+        - { name: date_to, in: query, schema: { type: string, format: date } }
+        - { name: operator_id, in: query, schema: { type: string, format: uuid } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/BenefitStatus' } }
+        - { name: effi_id, in: query, schema: { type: string } }
+        - { name: effi_username, in: query, schema: { type: string } }
+        - { name: empresa, in: query, schema: { type: string } }
+        - { name: tipo_acceso, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: Totales y series
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/Statistics' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/admin/integrations:
+    post:
+      tags: [Admin]
+      summary: Crear integración
+      security: [{ bearerJwt: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, allowed_scopes]
+              additionalProperties: false
+              properties:
+                name: { type: string, minLength: 2, maxLength: 100 }
+                description: { type: [string, 'null'], maxLength: 500 }
+                contact_email: { type: [string, 'null'], format: email }
+                allowed_scopes: { type: array, items: { $ref: '#/components/schemas/Scope' } }
+            example: { name: Effi ERP, description: Consulta de beneficios, allowed_scopes: ['attendees:read', 'benefits:read', 'consumptions:read'] }
+      responses:
+        '201':
+          description: Creada
+          content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { id: { type: string, format: uuid }, name: { type: string }, allowed_scopes: { type: array, items: { type: string } } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/admin/integrations/{id}/credentials:
+    post:
+      tags: [Admin]
+      summary: Generar credencial (el secreto se devuelve una sola vez)
+      security: [{ bearerJwt: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scopes]
+              additionalProperties: false
+              properties:
+                scopes: { type: array, minItems: 1, items: { $ref: '#/components/schemas/Scope' } }
+                expires_at: { type: [string, 'null'], format: date-time }
+      responses:
+        '201':
+          description: Credencial emitida
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/IssuedCredential' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /v1/admin/credentials/{id}/rotate:
+    post:
+      tags: [Admin]
+      summary: Rotar credencial (nueva credencial; la anterior se revoca)
+      security: [{ bearerJwt: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      responses:
+        '201':
+          description: Nueva credencial
+          content: { application/json: { schema: { type: object, properties: { data: { $ref: '#/components/schemas/IssuedCredential' } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/admin/credentials/{id}/revoke:
+    post:
+      tags: [Admin]
+      summary: Revocar credencial
+      security: [{ bearerJwt: [] }]
+      parameters: [{ $ref: '#/components/parameters/Id' }]
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false, properties: { reason: { type: [string, 'null'], maxLength: 300 } } }
+      responses:
+        '200':
+          description: Revocada
+          content: { application/json: { schema: { type: object, properties: { data: { type: object, properties: { id: { type: string }, revoked: { type: boolean } } } } } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    oauth2:
+      type: oauth2
+      description: Client credentials. Access token HS256, 1 h.
+      flows:
+        clientCredentials:
+          tokenUrl: /v1/oauth/token
+          scopes:
+            attendees:read: Consultar asistentes
+            attendees:write: Crear/actualizar asistentes y elegibilidad
+            event-days:read: Consultar días del evento
+            benefits:read: Consultar beneficios
+            benefits:write: Generar beneficios
+            benefits:validate: Validar beneficios
+            benefits:redeem: Consumir beneficios
+            consumptions:read: Consultar consumos
+            statistics:read: Consultar estadísticas
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: '`<client_id>.<client_secret>`'
+    bearerJwt:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT de Supabase Auth de un usuario del staff (sus permisos actúan como scopes).
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Clave única por intento lógico (p. ej. UUID). Reintentos con la misma clave no duplican el consumo.
+      schema: { type: string, pattern: '^[A-Za-z0-9_\-:.]{8,255}$' }
+
+  responses:
+    BadRequest:
+      description: 'Parámetros inválidos (`VALIDATION_ERROR`, `INVALID_PARAMETER`, `INVALID_JSON`)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: 'Sin autenticación o credencial inválida (`UNAUTHENTICATED`, `INVALID_TOKEN`, `TOKEN_EXPIRED`, `INVALID_CREDENTIALS`, `CREDENTIAL_REVOKED`, `CREDENTIAL_EXPIRED`)'
+      headers: { WWW-Authenticate: { schema: { type: string } } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: UNAUTHENTICATED, message: 'Falta autenticación (Authorization: Bearer <token> o X-API-Key)', request_id: 3b1f… } }
+    Forbidden:
+      description: 'Scope insuficiente o integración desactivada (`INSUFFICIENT_SCOPE`, `FORBIDDEN`, `INTEGRATION_DISABLED`, `STAFF_ONLY`)'
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: { code: INSUFFICIENT_SCOPE, message: La credencial no tiene el scope requerido, details: { required: 'consumptions:read' }, request_id: 3b1f… } }
+    NotFound:
+      description: Recurso inexistente
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Conflict:
+      description: 'Identificador duplicado (`CONFLICT`, details.field = email | effi_id | effi_username)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    PayloadTooLarge:
+      description: Cuerpo > 64 KB
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    UnsupportedMediaType:
+      description: Content-Type distinto de application/json
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unprocessable:
+      description: 'Validación de negocio (`VALIDATION_ERROR` con details.fields, `UNKNOWN_EVENT_DAY`, `CONSTRAINT_VIOLATION`…)'
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooManyRequests:
+      description: Límite excedido (`RATE_LIMITED`)
+      headers:
+        Retry-After: { schema: { type: integer } }
+        X-RateLimit-Limit: { schema: { type: integer } }
+        X-RateLimit-Remaining: { schema: { type: integer } }
+        X-RateLimit-Reset: { schema: { type: integer } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    RedeemFailed:
+      description: |
+        Consumo rechazado. `error.code`:
+        - **404** `INVALID_QR` (token desconocido) · `BENEFIT_NOT_FOUND`
+        - **409** `ALREADY_CONSUMED` (incluye `data.consumption` con quién y cuándo)
+        - **422** `NOT_TODAY`, `EXPIRED`, `NOT_STARTED`, `NOT_ELIGIBLE`, `ATTENDEE_INACTIVE`, `CANCELLED`, `DAY_INACTIVE`, `IDEMPOTENCY_KEY_REUSED`
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { $ref: '#/components/schemas/ErrorBody' }
+              data: { $ref: '#/components/schemas/BenefitResult' }
+          example:
+            error: { code: ALREADY_CONSUMED, message: BENEFICIO YA CONSUMIDO, request_id: 3b1f… }
+            data: { ok: false, code: ALREADY_CONSUMED, message: BENEFICIO YA CONSUMIDO, consumption: { consumed_at: '2026-10-16T15:02:11Z', operator: Barra 1 } }
+
+  schemas:
+    Scope:
+      type: string
+      enum: ['attendees:read', 'attendees:write', 'event-days:read', 'benefits:read', 'benefits:write', 'benefits:validate', 'benefits:redeem', 'consumptions:read', 'statistics:read']
+    BenefitStatus:
+      type: string
+      enum: [PENDING, CONSUMED, EXPIRED, CANCELLED]
+    ErrorBody:
+      type: object
+      required: [code, message, request_id]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        details: {}
+        request_id: { type: string }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: '#/components/schemas/ErrorBody' }
+    OAuthError:
+      type: object
+      properties:
+        error: { type: string, enum: [invalid_request, invalid_client, unsupported_grant_type, invalid_scope, slow_down] }
+        error_description: { type: string }
+        request_id: { type: string }
+    Health:
+      type: object
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        service: { type: string }
+        version: { type: string }
+        time: { type: string, format: date-time }
+        checks: { type: object, properties: { database: { type: string, enum: [ok, unavailable] } } }
+    TokenRequest:
+      type: object
+      required: [grant_type]
+      properties:
+        grant_type: { type: string, enum: [client_credentials] }
+        client_id: { type: string }
+        client_secret: { type: string }
+        scope: { type: string, description: Scopes separados por espacio (subconjunto de los de la credencial) }
+    TokenResponse:
+      type: object
+      properties:
+        access_token: { type: string }
+        token_type: { type: string, enum: [Bearer] }
+        expires_in: { type: integer, example: 3600 }
+        scope: { type: string }
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+    EventDay:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        date: { type: string, format: date }
+        name: { type: string }
+        active: { type: boolean }
+        start_time: { type: string, example: '08:00:00' }
+        end_time: { type: string, example: '20:00:00' }
+        is_today: { type: boolean, description: Según la hora del servidor (America/Bogota) }
+    AttendeeCreate:
+      type: object
+      required: [nombres]
+      additionalProperties: false
+      properties:
+        nombres: { type: string, minLength: 1, maxLength: 120 }
+        apellidos: { type: [string, 'null'], maxLength: 120 }
+        email: { type: [string, 'null'], format: email, description: Necesario para que el asistente inicie sesión en el portal }
+        telefono: { type: [string, 'null'], maxLength: 40 }
+        effi_id: { type: [string, 'null'], maxLength: 64, description: Identificador externo opcional (único si se envía) }
+        effi_username: { type: [string, 'null'], maxLength: 120, description: Identificador externo opcional (único, sin distinguir mayúsculas) }
+        tipo_acceso: { type: [string, 'null'], pattern: '^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$', description: Se normaliza a MAYÚSCULAS; por defecto GENERAL }
+        empresa: { type: [string, 'null'], maxLength: 200 }
+        activo: { type: boolean, default: true }
+        metadata: { type: object, additionalProperties: true, description: Datos libres (< 16 KB) }
+        event_day_ids: { type: array, maxItems: 31, items: { type: string, format: uuid } }
+    AttendeePatch:
+      type: object
+      minProperties: 1
+      additionalProperties: false
+      properties:
+        nombres: { type: string, minLength: 1, maxLength: 120 }
+        apellidos: { type: [string, 'null'] }
+        email: { type: [string, 'null'], format: email }
+        telefono: { type: [string, 'null'] }
+        effi_id: { type: [string, 'null'] }
+        effi_username: { type: [string, 'null'] }
+        tipo_acceso: { type: [string, 'null'] }
+        empresa: { type: [string, 'null'] }
+        activo: { type: boolean }
+        metadata: { type: object, additionalProperties: true }
+        event_day_ids: { type: array, items: { type: string, format: uuid } }
+    Attendee:
+      type: object
+      properties:
+        id: { type: string, format: uuid, description: Identificador interno del sistema }
+        nombres: { type: string }
+        apellidos: { type: string }
+        email: { type: [string, 'null'] }
+        telefono: { type: [string, 'null'] }
+        effi_id: { type: [string, 'null'] }
+        effi_username: { type: [string, 'null'] }
+        tipo_acceso: { type: string }
+        empresa: { type: [string, 'null'] }
+        activo: { type: boolean }
+        metadata: { type: object }
+        has_account: { type: boolean, description: Ya inició sesión en el portal }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AttendeeDetail:
+      allOf:
+        - { $ref: '#/components/schemas/Attendee' }
+        - type: object
+          properties:
+            event_days:
+              type: array
+              items:
+                type: object
+                properties:
+                  event_day_id: { type: string, format: uuid }
+                  date: { type: string, format: date }
+                  name: { type: string }
+                  eligible: { type: boolean }
+    Benefit:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        attendee_id: { type: string, format: uuid }
+        event_day: { $ref: '#/components/schemas/EventDay' }
+        status: { $ref: '#/components/schemas/BenefitStatus' }
+        effective_status: { $ref: '#/components/schemas/BenefitStatus' }
+        generated_at: { type: string, format: date-time }
+        expiration_at: { type: string, format: date-time }
+        consumed_at: { type: [string, 'null'], format: date-time }
+        cancelled_at: { type: [string, 'null'], format: date-time }
+        cancel_reason: { type: [string, 'null'] }
+        updated_at: { type: string, format: date-time }
+    Consumption:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        benefit_id: { type: string, format: uuid }
+        attendee_id: { type: string, format: uuid }
+        event_day_id: { type: string, format: uuid }
+        event_date: { type: string, format: date }
+        consumed_at: { type: string, format: date-time }
+        operator:
+          type: object
+          properties:
+            type: { type: string, enum: [staff, integration] }
+            id: { type: string, format: uuid }
+            label: { type: [string, 'null'] }
+        is_override: { type: boolean }
+        override_reason: { type: [string, 'null'] }
+        metadata: { type: object }
+        created_at: { type: string, format: date-time }
+    BenefitActionBody:
+      type: object
+      additionalProperties: false
+      properties:
+        token: { type: string, maxLength: 500, description: Token o URL del QR (opcional en rutas por id; si se envía debe coincidir) }
+        metadata: { type: object, additionalProperties: { type: [string, number, boolean, 'null'] }, description: 'Datos de trazabilidad (p. ej. { "pos": "barra-2" })' }
+    TokenActionBody:
+      allOf:
+        - { $ref: '#/components/schemas/BenefitActionBody' }
+        - { type: object, required: [token] }
+    BenefitResult:
+      type: object
+      properties:
+        ok: { type: boolean }
+        code:
+          type: string
+          enum: [APPROVED, VALID, ALREADY_CONSUMED, INVALID_QR, BENEFIT_NOT_FOUND, NOT_TODAY, NOT_STARTED, NOT_ELIGIBLE, ATTENDEE_INACTIVE, EXPIRED, CANCELLED, DAY_INACTIVE, IDEMPOTENCY_KEY_REUSED]
+        message: { type: string, example: BENEFICIO APROBADO }
+        mode: { type: string, enum: [validate, redeem] }
+        server_time: { type: string, format: date-time }
+        today: { type: string, format: date }
+        idempotent_replay: { type: boolean }
+        benefit:
+          type: [object, 'null']
+          properties:
+            id: { type: string, format: uuid }
+            status: { $ref: '#/components/schemas/BenefitStatus' }
+            consumed_at: { type: [string, 'null'], format: date-time }
+            expiration_at: { type: string, format: date-time }
+            event_day: { $ref: '#/components/schemas/EventDay' }
+        attendee:
+          type: [object, 'null']
+          properties:
+            id: { type: string, format: uuid }
+            nombres: { type: string }
+            apellidos: { type: string }
+            effi_id: { type: [string, 'null'] }
+            effi_username: { type: [string, 'null'] }
+            tipo_acceso: { type: string }
+            empresa: { type: [string, 'null'] }
+        consumption:
+          type: [object, 'null']
+          properties:
+            id: { type: string, format: uuid }
+            consumed_at: { type: string, format: date-time }
+            is_override: { type: boolean }
+            operator: { type: [string, 'null'] }
+    Statistics:
+      type: object
+      properties:
+        generated_at: { type: string, format: date-time }
+        today: { type: string, format: date }
+        totals:
+          type: object
+          properties:
+            attendees: { type: integer }
+            attendees_inactive: { type: integer }
+            eligible_attendees: { type: integer }
+            benefits: { type: integer }
+            consumed: { type: integer }
+            pending: { type: integer }
+            expired: { type: integer }
+            cancelled: { type: integer }
+            consumptions: { type: integer }
+            consumed_today: { type: integer }
+        by_day: { type: array, items: { type: object } }
+        by_hour: { type: array, items: { type: object, properties: { hour: { type: integer }, count: { type: integer } } } }
+        by_operator: { type: array, items: { type: object } }
+        by_access_type: { type: array, items: { type: object } }
+        by_date: { type: array, items: { type: object } }
+    IssuedCredential:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        client_id: { type: string, example: edp_ci_0123456789abcdef01234567 }
+        client_secret: { type: string, description: Se muestra UNA sola vez }
+        api_key: { type: string, description: '`client_id.client_secret` para la cabecera X-API-Key' }
+        scopes: { type: array, items: { type: string } }
+        expires_at: { type: [string, 'null'], format: date-time }

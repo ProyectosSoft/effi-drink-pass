@@ -1,0 +1,2311 @@
+{
+  "info": {
+    "name": "Effi Drink Pass API v1",
+    "_postman_id": "b7a2f1f0-3c1e-4d9a-9a55-effi0drinkpass",
+    "description": "Colección completa de la API pública de Effi Drink Pass (Feria Effix 2026). Ver docs/POSTMAN.md.\n\nOrden recomendado: ejecutar la colección completa con el Runner. El pre-request de la colección obtiene y renueva el access token OAuth2 automáticamente.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Obtiene/renueva automáticamente el access token OAuth2 (client_credentials) si hay client_id/secret.",
+          "const base = pm.collectionVariables.get('base_url') || pm.environment.get('base_url');",
+          "const cid = pm.environment.get('client_id') || pm.collectionVariables.get('client_id');",
+          "const secret = pm.environment.get('client_secret') || pm.collectionVariables.get('client_secret');",
+          "const exp = Number(pm.environment.get('access_token_expires_at') || 0);",
+          "const url = pm.request.url.toString();",
+          "if (cid && secret && base && !url.includes('/oauth/token') && !url.includes('/auth/v1/') && Date.now() > exp - 60000) {",
+          "  pm.sendRequest({",
+          "    url: base + '/v1/oauth/token', method: 'POST',",
+          "    header: { 'Content-Type': 'application/json' },",
+          "    body: { mode: 'raw', raw: JSON.stringify({ grant_type: 'client_credentials', client_id: cid, client_secret: secret }) }",
+          "  }, (err, res) => {",
+          "    if (!err && res.code === 200) {",
+          "      const j = res.json();",
+          "      pm.environment.set('access_token', j.access_token);",
+          "      pm.environment.set('access_token_expires_at', String(Date.now() + j.expires_in * 1000));",
+          "    }",
+          "  });",
+          "}"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Contratos comunes a toda la API.",
+          "if (!pm.request.url.toString().includes('/auth/v1/')) {",
+          "  pm.test('[común] X-Request-Id presente', () => pm.expect(pm.response.headers.get('X-Request-Id')).to.be.a('string'));",
+          "  pm.test('[común] Cache-Control no-store', () => pm.expect(pm.response.headers.get('Cache-Control') || '').to.include('no-store'));",
+          "  if (pm.response.code >= 400 && !pm.request.url.toString().includes('/oauth/token')) {",
+          "    pm.test('[común] Error con formato { error: { code, message, request_id } }', () => {",
+          "      const e = pm.response.json().error;",
+          "      pm.expect(e).to.have.property('code');",
+          "      pm.expect(e).to.have.property('message');",
+          "      pm.expect(e).to.have.property('request_id');",
+          "    });",
+          "  }",
+          "  if (pm.response.code === 500) {",
+          "    pm.test('[común] 500 no filtra detalles internos', () => pm.expect(pm.response.text()).to.not.match(/relation|column|stack|at \\w+ \\(/i));",
+          "  }",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "collection_version",
+      "value": "1.0.0"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 · Health",
+      "description": "Endpoint público de estado.",
+      "item": [
+        {
+          "name": "Health check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status ok y base de datos ok', () => { const j = pm.response.json(); pm.expect(j.status).to.eql('ok'); pm.expect(j.checks.database).to.eql('ok'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "health"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 · Staff: login y credenciales de integración",
+      "description": "Requiere staff_jwt de un usuario con integrations:manage. Crea una integración y credenciales de prueba y las guarda en el environment.",
+      "item": [
+        {
+          "name": "Staff · Login Supabase Auth (password)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.environment.set('staff_jwt', j.access_token);",
+                  "pm.test('staff_jwt guardado', () => pm.expect(j.access_token).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "apikey",
+                "value": "{{supabase_anon_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": "{{supabase_url}}/auth/v1/token?grant_type=password",
+            "description": "Requiere un usuario del staff con contraseña definida (Mi cuenta → contraseña). Guarda staff_jwt.",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{staff_email}}\",\n  \"password\": \"{{staff_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Crear integración",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('integration_name', 'Postman ' + new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('integration_id', pm.response.json().data.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/integrations",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "integrations"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{staff_jwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"{{integration_name}}\",\n  \"description\": \"Integración de prueba creada desde Postman\",\n  \"allowed_scopes\": [\n    \"attendees:read\",\n    \"attendees:write\",\n    \"event-days:read\",\n    \"benefits:read\",\n    \"benefits:write\",\n    \"benefits:validate\",\n    \"benefits:redeem\",\n    \"consumptions:read\",\n    \"statistics:read\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Generar credencial completa",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('secreto con formato fuerte', () => pm.expect(d.client_secret).to.match(/^edp_sk_[A-Za-z0-9_-]{43}$/));",
+                  "pm.environment.set('client_id', d.client_id);",
+                  "pm.environment.set('client_secret', d.client_secret);",
+                  "pm.environment.set('api_key', d.api_key);",
+                  "pm.environment.set('credential_id', d.id);",
+                  "pm.environment.unset('access_token');",
+                  "pm.environment.set('access_token_expires_at', '0');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/integrations/{{integration_id}}/credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "integrations",
+                "{{integration_id}}",
+                "credentials"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{staff_jwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scopes\": [\n    \"attendees:read\",\n    \"attendees:write\",\n    \"event-days:read\",\n    \"benefits:read\",\n    \"benefits:write\",\n    \"benefits:validate\",\n    \"benefits:redeem\",\n    \"consumptions:read\",\n    \"statistics:read\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Generar credencial solo lectura (para probar 403)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.environment.set('readonly_api_key', d.api_key);",
+                  "pm.environment.set('readonly_credential_id', d.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/integrations/{{integration_id}}/credentials",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "integrations",
+                "{{integration_id}}",
+                "credentials"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{staff_jwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"scopes\": [\n    \"attendees:read\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Integración NO puede administrar → 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/integrations",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "integrations"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Intento no autorizado\",\n  \"allowed_scopes\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 · Integraciones: OAuth2 y API key",
+      "description": "Staff: login con Supabase Auth (email+password) → staff_jwt. Integraciones: OAuth2 client_credentials → access_token (automático por el pre-request de la colección).",
+      "item": [
+        {
+          "name": "OAuth2 · Token (client_credentials, form)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const j = pm.response.json();",
+                  "pm.test('token Bearer', () => { pm.expect(j.token_type).to.eql('Bearer'); pm.expect(j.expires_in).to.be.above(0); });",
+                  "pm.environment.set('access_token', j.access_token);",
+                  "pm.environment.set('access_token_expires_at', String(Date.now() + j.expires_in * 1000));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/oauth/token",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "token"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "client_credentials"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{client_id}}"
+                },
+                {
+                  "key": "client_secret",
+                  "value": "{{client_secret}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "OAuth2 · Credenciales inválidas → 401 invalid_client",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('error invalid_client (RFC 6749)', () => pm.expect(pm.response.json().error).to.eql('invalid_client'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/oauth/token",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "token"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grant_type\": \"client_credentials\",\n  \"client_id\": \"{{client_id}}\",\n  \"client_secret\": \"edp_sk_incorrecto\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "OAuth2 · grant_type no soportado → 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('unsupported_grant_type', () => pm.expect(pm.response.json().error).to.eql('unsupported_grant_type'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/oauth/token",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "oauth",
+                "token"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"grant_type\": \"password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Identidad de la credencial (GET /v1/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('principal de integración con scopes', () => { const d = pm.response.json().data; pm.expect(d.type).to.eql('integration'); pm.expect(d.scopes).to.be.an('array').that.is.not.empty; });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "API key (X-API-Key) · GET /v1/me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "X-API-Key",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "{{api_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 · Días del evento",
+      "description": "",
+      "item": [
+        {
+          "name": "Listar días",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const days = pm.response.json().data;",
+                  "pm.test('hay días configurados', () => pm.expect(days).to.be.an('array').that.is.not.empty);",
+                  "const today = days.find(d => d.is_today);",
+                  "pm.environment.set('event_day_id', (today || days[0]).id);",
+                  "const other = days.find(d => !d.is_today);",
+                  "if (other) pm.environment.set('event_day_id_other', other.id);",
+                  "if (!today) console.warn('No hay un día del evento con fecha de HOY: los consumos devolverán NOT_TODAY. Cree un día de prueba con la fecha actual (ver docs/POSTMAN.md).');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/event-days",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "event-days"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Obtener día",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/event-days/{{event_day_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "event-days",
+                "{{event_day_id}}"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 · Asistentes",
+      "description": "CRUD y búsqueda por identificadores externos (effi_id / effi_username).",
+      "item": [
+        {
+          "name": "Crear asistente (con días → genera beneficios)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('rnd', String(Date.now()));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.environment.set('attendee_id', d.id);",
+                  "pm.environment.set('effi_id', d.effi_id);",
+                  "pm.test('Location', () => pm.expect(pm.response.headers.get('Location')).to.include(d.id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombres\": \"Postman\",\n  \"apellidos\": \"Prueba {{rnd}}\",\n  \"email\": \"postman.{{rnd}}@example.invalid\",\n  \"effi_id\": \"PM-{{rnd}}\",\n  \"effi_username\": \"postman.{{rnd}}\",\n  \"tipo_acceso\": \"VIP\",\n  \"empresa\": \"QA\",\n  \"event_day_ids\": [\"{{event_day_id}}\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Listar asistentes (paginado)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('meta de paginación', () => pm.expect(pm.response.json().meta).to.include.keys('page', 'page_size', 'total', 'total_pages'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees?page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Buscar por effi_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('encuentra exactamente 1', () => pm.expect(pm.response.json().meta.total).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees?effi_id={{effi_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ],
+              "query": [
+                {
+                  "key": "effi_id",
+                  "value": "{{effi_id}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Obtener asistente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('incluye event_days', () => pm.expect(pm.response.json().data.event_days).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees/{{attendee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees",
+                "{{attendee_id}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Actualizar asistente (PATCH)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('empresa actualizada', () => pm.expect(pm.response.json().data.empresa).to.eql('QA Actualizada'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees/{{attendee_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees",
+                "{{attendee_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"empresa\": \"QA Actualizada\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Definir días elegibles (todos)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const ids = [pm.environment.get('event_day_id'), pm.environment.get('event_day_id_other')].filter(Boolean);",
+                  "pm.variables.set('day_ids', JSON.stringify(ids));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees/{{attendee_id}}/event-days",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees",
+                "{{attendee_id}}",
+                "event-days"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"event_day_ids\": {{day_ids}} }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Beneficios del asistente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const list = pm.response.json().data;",
+                  "const today = list.find(b => b.event_day.id === pm.environment.get('event_day_id'));",
+                  "const other = list.find(b => b.event_day.id !== pm.environment.get('event_day_id'));",
+                  "pm.environment.set('benefit_id', today.id);",
+                  "if (other) pm.environment.set('benefit_id_other_day', other.id);",
+                  "pm.test('un beneficio por día, sin token expuesto', () => { pm.expect(list.length).to.be.at.least(1); pm.expect(pm.response.text()).to.not.include('token'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees/{{attendee_id}}/benefits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees",
+                "{{attendee_id}}",
+                "benefits"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 · Beneficios: validar y consumir",
+      "description": "Requiere que event_day_id sea un día con la fecha de HOY en el servidor (America/Bogota).",
+      "item": [
+        {
+          "name": "Listar beneficios pendientes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits?status=PENDING&page_size=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "PENDING"
+                },
+                {
+                  "key": "page_size",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Estado del beneficio",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('PENDING', () => pm.expect(pm.response.json().data.effective_status).to.eql('PENDING'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id}}"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Validar beneficio (no consume)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('VALID', () => pm.expect(pm.response.json().data.code).to.eql('VALID'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id}}/validate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id}}",
+                "validate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Consumir beneficio (Idempotency-Key)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.environment.set('idempotency_key', 'postman-' + pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('BENEFICIO APROBADO', () => { const d = pm.response.json().data; pm.expect(d.code).to.eql('APPROVED'); pm.expect(d.message).to.eql('BENEFICIO APROBADO'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotency_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id}}/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id}}",
+                "redeem"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metadata\": {\n    \"pos\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Reintento con la MISMA Idempotency-Key → misma respuesta",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Idempotent-Replayed: true', () => pm.expect(pm.response.headers.get('Idempotent-Replayed')).to.eql('true'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotency_key}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id}}/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id}}",
+                "redeem"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"metadata\": {\n    \"pos\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Intentar consumir nuevamente → 409 BENEFICIO YA CONSUMIDO",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error.code = ALREADY_CONSUMED', () => pm.expect(pm.response.json().error.code).to.eql('ALREADY_CONSUMED'));",
+                  "pm.test('informa quién y cuándo', () => pm.expect(pm.response.json().data.consumption).to.have.property('consumed_at'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id}}/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id}}",
+                "redeem"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "QR inválido → 404 INVALID_QR (sin datos)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error.code = INVALID_QR', () => pm.expect(pm.response.json().error.code).to.eql('INVALID_QR'));",
+                  "pm.test('no revela asistente', () => pm.expect(pm.response.json().data.attendee).to.eql(null));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "redeem"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "QR de otro día → 422 (NOT_TODAY o EXPIRED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 422', () => pm.response.to.have.status(422));",
+                  "pm.test('NOT_TODAY o EXPIRED', () => pm.expect(['NOT_TODAY', 'EXPIRED']).to.include(pm.response.json().error.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id_other_day}}/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id_other_day}}",
+                "redeem"
+              ]
+            },
+            "description": "Si el otro día es futuro → NOT_TODAY (QR NO VÁLIDO PARA HOY); si es pasado → EXPIRED (BENEFICIO EXPIRADO).",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "QR expirado → 422 EXPIRED (requiere benefit_id_expired)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('benefit_id_expired')) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error.code = EXPIRED', () => pm.expect(pm.response.json().error.code).to.eql('EXPIRED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/{{benefit_id_expired}}/redeem",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "{{benefit_id_expired}}",
+                "redeem"
+              ]
+            },
+            "description": "Configure benefit_id_expired con un beneficio de un día ya terminado (ver docs/POSTMAN.md). Si está vacío, la prueba se omite.",
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Validar por token del QR (qr_token, opcional)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (!pm.environment.get('qr_token')) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/benefits/validate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "benefits",
+                "validate"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{qr_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 · Consumos",
+      "description": "",
+      "item": [
+        {
+          "name": "Listar consumos por effi_id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const d = pm.response.json().data;",
+                  "pm.test('1 consumo', () => pm.expect(d.length).to.eql(1));",
+                  "if (d[0]) pm.environment.set('consumption_id', d[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/consumptions?effi_id={{effi_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consumptions"
+              ],
+              "query": [
+                {
+                  "key": "effi_id",
+                  "value": "{{effi_id}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Obtener consumo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('operador = integración', () => pm.expect(pm.response.json().data.operator.type).to.eql('integration'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/consumptions/{{consumption_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consumptions",
+                "{{consumption_id}}"
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 · Estadísticas",
+      "description": "",
+      "item": [
+        {
+          "name": "Estadísticas globales",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "pm.test('totales y series', () => { const d = pm.response.json().data; pm.expect(d).to.have.property('totals'); pm.expect(d.by_hour).to.have.lengthOf(24); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/statistics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "statistics"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Estadísticas por día",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/statistics?event_day_id={{event_day_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "statistics"
+              ],
+              "query": [
+                {
+                  "key": "event_day_id",
+                  "value": "{{event_day_id}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 · Errores (400 · 401 · 403 · 404 · 409 · 413 · 415 · 422 · 429 · 500)",
+      "description": "Casos negativos del contrato. 500 no es reproducible a propósito (no existe un endpoint de fallo inducido en producción); el test común de la colección valida su formato si ocurre.",
+      "item": [
+        {
+          "name": "400 · id con formato inválido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('error.code = VALIDATION_ERROR', () => pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees/no-es-uuid",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees",
+                "no-es-uuid"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 · parámetro de consulta desconocido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees?inventado=1",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ],
+              "query": [
+                {
+                  "key": "inventado",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "400 · JSON mal formado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 400', () => pm.response.to.have.status(400));",
+                  "pm.test('error.code = INVALID_JSON', () => pm.expect(pm.response.json().error.code).to.eql('INVALID_JSON'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"nombres\": ",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "401 · sin autenticación",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('error.code = UNAUTHENTICATED', () => pm.expect(pm.response.json().error.code).to.eql('UNAUTHENTICATED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "401 · token inválido",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "eyJhbGciOiJIUzI1NiJ9.eyJpc3MiOiJlZmZpLWRyaW5rLXBhc3MifQ.invalida",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "403 · scope insuficiente (credencial solo lectura)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 403', () => pm.response.to.have.status(403));",
+                  "pm.test('error.code = INSUFFICIENT_SCOPE', () => pm.expect(pm.response.json().error.code).to.eql('INSUFFICIENT_SCOPE'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/consumptions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "consumptions"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "X-API-Key",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "{{readonly_api_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "404 · recurso inexistente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error.code = NOT_FOUND', () => pm.expect(pm.response.json().error.code).to.eql('NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees/00000000-0000-4000-8000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees",
+                "00000000-0000-4000-8000-000000000000"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "404 · ruta inexistente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 404', () => pm.response.to.have.status(404));",
+                  "pm.test('error.code = ROUTE_NOT_FOUND', () => pm.expect(pm.response.json().error.code).to.eql('ROUTE_NOT_FOUND'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/no-existe",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "no-existe"
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "409 · effi_id duplicado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 409', () => pm.response.to.have.status(409));",
+                  "pm.test('error.code = CONFLICT', () => pm.expect(pm.response.json().error.code).to.eql('CONFLICT'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombres\": \"Duplicado\",\n  \"effi_id\": \"{{effi_id}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "413 · cuerpo mayor a 64 KB",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('big', 'x'.repeat(70000));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 413', () => pm.response.to.have.status(413));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"nombres\": \"Grande\", \"metadata\": { \"blob\": \"{{big}}\" } }",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "415 · Content-Type incorrecto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 415', () => pm.response.to.have.status(415));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "nombres=Texto plano"
+            }
+          }
+        },
+        {
+          "name": "422 · validación de campos",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 422', () => pm.response.to.have.status(422));",
+                  "pm.test('error.code = VALIDATION_ERROR', () => pm.expect(pm.response.json().error.code).to.eql('VALIDATION_ERROR'));",
+                  "pm.test('detalle por campo', () => pm.expect(pm.response.json().error.details.fields).to.be.an('array').that.is.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/attendees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "attendees"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"apellidos\": \"Sin nombre\",\n  \"email\": \"no-es-email\",\n  \"campo_inventado\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "429 · rate limit de estadísticas (ejecutar en el Runner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const n = Number(pm.environment.get('rl_count') || 0) + 1;",
+                  "pm.environment.set('rl_count', String(n));",
+                  "if (pm.response.code === 429) {",
+                  "  pm.test('429 con Retry-After y X-RateLimit-*', () => { pm.expect(pm.response.headers.get('Retry-After')).to.be.ok; pm.expect(pm.response.headers.get('X-RateLimit-Remaining')).to.eql('0'); });",
+                  "  pm.environment.unset('rl_count');",
+                  "} else if (n < 35) {",
+                  "  pm.execution.setNextRequest(pm.info.requestName);",
+                  "} else {",
+                  "  pm.test('se esperaba 429 antes de 35 intentos', () => pm.expect.fail());",
+                  "  pm.environment.unset('rl_count');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/statistics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "statistics"
+              ]
+            },
+            "description": "Se repite a sí mismo hasta 35 veces con setNextRequest; el límite es 30/min por credencial."
+          }
+        }
+      ]
+    },
+    {
+      "name": "09 · Rotación y revocación (staff)",
+      "description": "",
+      "item": [
+        {
+          "name": "Rotar credencial solo lectura",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 201', () => pm.response.to.have.status(201));",
+                  "const d = pm.response.json().data;",
+                  "pm.environment.set('readonly_credential_id', d.id);",
+                  "pm.environment.set('readonly_api_key_old', pm.environment.get('readonly_api_key'));",
+                  "pm.environment.set('readonly_api_key', d.api_key);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/credentials/{{readonly_credential_id}}/rotate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "credentials",
+                "{{readonly_credential_id}}",
+                "rotate"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{staff_jwt}}",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "La credencial rotada ya no funciona → 401 CREDENTIAL_REVOKED",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 401', () => pm.response.to.have.status(401));",
+                  "pm.test('error.code = CREDENTIAL_REVOKED', () => pm.expect(pm.response.json().error.code).to.eql('CREDENTIAL_REVOKED'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "me"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "key",
+                  "value": "X-API-Key",
+                  "type": "string"
+                },
+                {
+                  "key": "value",
+                  "value": "{{readonly_api_key_old}}",
+                  "type": "string"
+                },
+                {
+                  "key": "in",
+                  "value": "header",
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Revocar credencial solo lectura",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/admin/credentials/{{readonly_credential_id}}/revoke",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "v1",
+                "admin",
+                "credentials",
+                "{{readonly_credential_id}}",
+                "revoke"
+              ]
+            },
+            "description": "",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{staff_jwt}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Fin de prueba Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+# Dependencias y builds
+node_modules/
+dist/
+dev-dist/
+coverage/
+*.tsbuildinfo
+
+# Secretos — NUNCA versionar
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+supabase/.env
+supabase/functions/.env
+supabase/.temp/
+supabase/.branches/
+
+# Postman: entornos con credenciales reales
+docs/postman/*.local.json
+
+# Editor / SO
+.DS_Store
+Thumbs.db
+.idea/
+*.log

@@ -1,0 +1,58 @@
+name: Deploy frontend to GitHub Pages
+
+# Requisitos (una vez): Settings → Pages → Source: GitHub Actions.
+# Variables del repositorio (Settings → Secrets and variables → Actions → Variables):
+#   VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY (públicas por diseño; protegidas por RLS)
+#   VITE_PUBLIC_APP_URL  (opcional; p. ej. https://drinkpass.midominio.com o https://<user>.github.io/<repo>)
+#   PAGES_BASE_PATH      (opcional; "/" con dominio propio. Por defecto "/<repo>/")
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Build
+        run: npm run build
+        env:
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+          VITE_PUBLIC_APP_URL: ${{ vars.VITE_PUBLIC_APP_URL }}
+          VITE_BASE_PATH: ${{ vars.PAGES_BASE_PATH || format('/{0}/', github.event.repository.name) }}
+      - name: Verificar que no hay secretos en el bundle
+        run: |
+          if grep -rEl "sb_secret_[A-Za-z0-9]{8,}|c2VydmljZV9yb2xl|NlcnZpY2Vfcm9sZ|zZXJ2aWNlX3JvbG" dist/; then echo "::error::secreto en el bundle"; exit 1; fi
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
