@@ -25,7 +25,7 @@ export function base64UrlEncode(bytes: Uint8Array): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-export function base64UrlDecode(input: string): Uint8Array {
+function base64UrlDecode(input: string): Uint8Array {
   const b64 = input.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - (input.length % 4)) % 4)
   const bin = atob(b64)
   const out = new Uint8Array(bin.length)
@@ -58,23 +58,32 @@ export function peekJwtPayload(token: string): Record<string, unknown> | null {
 
 export type VerifyResult = { ok: true; claims: AccessTokenClaims } | { ok: false; reason: 'malformed' | 'signature' | 'expired' | 'claims' }
 
+/**
+ * Verifica firma, algoritmo, emisor, audiencia y expiración de un access token propio.
+ * Nunca lanza: cualquier token mal formado devuelve { ok: false } (→ 401, no 500).
+ */
 export async function verifyJwt(token: string, secret: string, nowSeconds = Math.floor(Date.now() / 1000)): Promise<VerifyResult> {
   const parts = token.split('.')
   if (parts.length !== 3) return { ok: false, reason: 'malformed' }
   let header: { alg?: string }
   let claims: AccessTokenClaims
+  let signature: Uint8Array
   try {
     header = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[0])))
     claims = JSON.parse(new TextDecoder().decode(base64UrlDecode(parts[1])))
+    // La firma también se decodifica aquí: un base64 inválido debe ser 'malformed', no una excepción.
+    signature = base64UrlDecode(parts[2])
   } catch {
     return { ok: false, reason: 'malformed' }
   }
+  if (!header || typeof header !== 'object' || !claims || typeof claims !== 'object') return { ok: false, reason: 'malformed' }
   // Solo HS256: evita ataques de confusión de algoritmo ("alg": "none", RS/HS).
   if (header.alg !== 'HS256') return { ok: false, reason: 'malformed' }
+  // crypto.subtle.verify compara en tiempo constante.
   const valid = await crypto.subtle.verify(
     'HMAC',
     await hmacKey(secret),
-    base64UrlDecode(parts[2]) as BufferSource,
+    signature as BufferSource,
     enc.encode(`${parts[0]}.${parts[1]}`),
   )
   if (!valid) return { ok: false, reason: 'signature' }

@@ -10,6 +10,12 @@ type Role = { id: string; name: string; description: string | null; active: bool
 type Perm = { id: string; name: string; description: string | null; integration_assignable: boolean }
 type RP = { role_id: string; permission_id: string }
 
+/**
+ * /admin/roles — matriz de roles × permisos. Accesible con `rolesManage` o `usersManage`;
+ * solo `rolesManage` puede editar (con `usersManage` es de solo lectura).
+ * Los cambios se acumulan localmente y se guardan por rol con `set_role_permissions`.
+ * El rol super_admin no se puede modificar. Permite crear roles nuevos (`upsert_role`).
+ */
 export default function Roles() {
   const { can } = useAuth()
   const qc = useQueryClient()
@@ -19,12 +25,16 @@ export default function Roles() {
   const perms = useQuery({ queryKey: ['permissions'], queryFn: async () => (await query<Perm[]>(supabase.from('permissions').select('*').order('name'))).data })
   const rp = useQuery({ queryKey: ['role-permissions'], queryFn: async () => (await query<RP[]>(supabase.from('role_permissions').select('*'))).data })
 
+  // role_id → nombres de permisos asignados (copia editable local).
   const [matrix, setMatrix] = useState<Record<string, Set<string>>>({})
+  // Roles modificados y aún no guardados; solo esos se envían al guardar.
   const [dirty, setDirty] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<unknown>(null)
   const [creating, setCreating] = useState(false)
 
+  // Reconstruye la matriz desde el servidor (ids → nombres de permiso) y descarta cambios
+  // locales cada vez que llegan datos nuevos (p. ej. tras guardar e invalidar).
   useEffect(() => {
     if (!rp.data || !perms.data) return
     const byId = new Map(perms.data.map((p) => [p.id, p.name]))
@@ -34,6 +44,7 @@ export default function Roles() {
     setDirty(new Set())
   }, [rp.data, perms.data])
 
+  /** Alterna un permiso de un rol; crea un Set nuevo para que React detecte el cambio. */
   const toggle = (roleId: string, perm: string) => {
     setMatrix((m) => {
       const s = new Set(m[roleId] ?? [])
@@ -48,6 +59,7 @@ export default function Roles() {
     setSaving(true)
     setError(null)
     try {
+      // Secuencial: si un rol falla, los anteriores ya quedaron guardados y se muestra el error.
       for (const roleId of dirty) await rpc('set_role_permissions', { p_role_id: roleId, p_permissions: [...(matrix[roleId] ?? [])] })
       toast('Permisos actualizados')
       void qc.invalidateQueries({ queryKey: ['role-permissions'] })
@@ -102,6 +114,11 @@ export default function Roles() {
   )
 }
 
+/**
+ * Modal de creación de rol. El nombre se fuerza a minúsculas y debe cumplir el patrón
+ * snake_case (letra inicial, luego minúsculas, dígitos o _; 2–50 caracteres).
+ * El rol se crea sin permisos; se asignan después en la matriz.
+ */
 function NewRole({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
   const [name, setName] = useState('')
   const [desc, setDesc] = useState('')

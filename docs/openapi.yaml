@@ -926,7 +926,7 @@ components:
       additionalProperties: false
       properties:
         token: { type: string, maxLength: 500, description: Token o URL del QR (opcional en rutas por id; si se envía debe coincidir) }
-        metadata: { type: object, additionalProperties: { type: [string, number, boolean, 'null'] }, description: 'Datos de trazabilidad (p. ej. { "pos": "barra-2" })' }
+        metadata: { type: object, maxProperties: 20, propertyNames: { maxLength: 64 }, additionalProperties: { type: [string, number, boolean, 'null'], maxLength: 200 }, description: 'Datos de trazabilidad (p. ej. { "pos": "barra-2" }). Máx. 20 claves de hasta 64 caracteres, valores de texto ≤ 200, total ≤ 2 KB' }
     TokenActionBody:
       allOf:
         - { $ref: '#/components/schemas/BenefitActionBody' }

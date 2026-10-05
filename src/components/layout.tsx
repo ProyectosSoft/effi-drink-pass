@@ -9,6 +9,7 @@ import { useAuth } from '@/lib/auth'
 import { PERMISSIONS as P } from '@/lib/types'
 import { Button, EmptyState, Spinner } from './ui'
 
+/** Marca de la app (enlace al inicio). `compact` muestra solo el ícono (barra móvil). */
 export function Logo({ compact }: { compact?: boolean }) {
   return (
     <Link to="/" className="flex items-center gap-2.5 font-bold tracking-tight">
@@ -25,6 +26,7 @@ export function Logo({ compact }: { compact?: boolean }) {
   )
 }
 
+/** Marco de las páginas públicas y del asistente: cabecera con navegación según sesión, contenido y pie. */
 export function PublicShell({ children }: { children: ReactNode }) {
   const { session, isStaff } = useAuth()
   return (
@@ -50,16 +52,25 @@ export function PublicShell({ children }: { children: ReactNode }) {
   )
 }
 
-/** Exige sesión iniciada. */
+/**
+ * Exige sesión iniciada. Sin sesión redirige a /login conservando la ruta actual en `next`
+ * para volver tras autenticarse. Guard de navegación (UI): no protege datos por sí mismo.
+ */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { loading, session } = useAuth()
   const loc = useLocation()
+  // Mientras se restaura la sesión no se decide nada, para no redirigir a /login por error.
   if (loading) return <Spinner />
   if (!session) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />
   return <>{children}</>
 }
 
-/** Exige uno de los permisos indicados. */
+/**
+ * Exige uno de los permisos indicados; si no, muestra "Sin acceso".
+ * Seguridad: es solo un guard de UI (evita mostrar pantallas inútiles). La autorización real está en
+ * la base de datos: RLS en las tablas y verificación de permisos dentro de cada RPC, de modo que
+ * manipular el estado del cliente no da acceso a datos ni acciones.
+ */
 export function RequirePermission({ anyOf, children }: { anyOf: string[]; children: ReactNode }) {
   const { can } = useAuth()
   if (!anyOf.some(can)) {
@@ -72,8 +83,10 @@ export function RequirePermission({ anyOf, children }: { anyOf: string[]; childr
   return <>{children}</>
 }
 
+/** Entrada del menú admin. `perms`: basta uno; `end`: activo solo con coincidencia exacta de ruta. */
 type NavItem = { to: string; label: string; icon: ReactNode; perms: string[]; end?: boolean }
 
+/** Menú de administración; los permisos deben coincidir con los guards de las rutas en App.tsx. */
 const NAV: NavItem[] = [
   { to: '/admin', label: 'Dashboard', icon: <LayoutDashboard className="size-4" />, perms: [P.statisticsRead], end: true },
   { to: '/admin/scanner', label: 'Scanner', icon: <ScanLine className="size-4" />, perms: [P.benefitsValidate, P.benefitsRedeem] },
@@ -89,13 +102,20 @@ const NAV: NavItem[] = [
   { to: '/admin/settings', label: 'Configuración', icon: <Cog className="size-4" />, perms: [P.settingsManage, P.eventDaysWrite] },
 ]
 
+/**
+ * Layout del área /admin: barra lateral en escritorio, cajón deslizable en móvil y <Outlet /> para
+ * la sección activa. Solo lista las secciones para las que el usuario tiene permiso.
+ */
 export function AdminShell() {
   const { access, can, signOut, isAttendee } = useAuth()
+  /** Cajón del menú móvil abierto. */
   const [open, setOpen] = useState(false)
   const loc = useLocation()
   const items = NAV.filter((n) => n.perms.some(can))
+  // El scanner aprovecha toda la pantalla en móvil (sin padding) para maximizar la cámara.
   const fullscreen = loc.pathname.startsWith('/admin/scanner')
 
+  // Se define una vez y se reutiliza en la barra lateral (escritorio) y en el cajón (móvil).
   const nav = (
     <nav className="flex flex-col gap-1" aria-label="Administración">
       {items.map((n) => (
@@ -134,6 +154,7 @@ export function AdminShell() {
       <div className="flex min-w-0 flex-col">
         <header className="sticky top-0 z-30 flex items-center justify-between border-b border-line bg-bg/85 px-4 py-3 backdrop-blur lg:hidden">
           <Logo compact />
+          {/* Título de la sección actual, derivado del menú con la misma regla de coincidencia que NavLink. */}
           <p className="truncate px-3 text-sm font-semibold">{items.find((i) => (i.end ? loc.pathname === i.to : loc.pathname.startsWith(i.to)))?.label ?? 'Admin'}</p>
           <button onClick={() => setOpen(true)} aria-label="Abrir menú" className="rounded-lg p-2 hover:bg-surface-2"><Menu className="size-5" /></button>
         </header>
@@ -157,7 +178,10 @@ export function AdminShell() {
   )
 }
 
-/** Solo staff activo con algún permiso. */
+/**
+ * Solo staff activo con algún permiso; a los asistentes los orienta a su portal.
+ * Igual que RequirePermission, es control de UI: el acceso real lo decide Postgres (RLS/RPC).
+ */
 export function RequireStaff({ children }: { children: ReactNode }) {
   const { isStaff, access } = useAuth()
   if (!isStaff) {

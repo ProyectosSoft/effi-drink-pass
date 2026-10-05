@@ -6,9 +6,14 @@ import specUrl from '../../docs/openapi.yaml?url'
 import { Logo } from '@/components/layout'
 import { apiBaseUrl } from '@/lib/config'
 
-/** Documentación interactiva de la API (Swagger UI) a partir de docs/openapi.yaml. */
+/**
+ * Documentación interactiva de la API (Swagger UI) a partir de docs/openapi.yaml.
+ * Página pública: solo muestra la especificación; "Try it out" está desactivado y no se
+ * persiste ninguna credencial en el navegador.
+ */
 export default function ApiDocs() {
   const ref = useRef<HTMLDivElement>(null)
+  // Swagger UI se monta una sola vez sobre el nodo del ref (no es un componente React).
   useEffect(() => {
     if (!ref.current) return
     SwaggerUIBundle({

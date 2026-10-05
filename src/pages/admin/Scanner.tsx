@@ -15,7 +15,16 @@ import { fmtEventDate, fmtTime, fullName } from '@/lib/format'
 import { query, rpc, supabase, toAppError } from '@/lib/supabase'
 import { PERMISSIONS as P, type ScanResult } from '@/lib/types'
 
+/**
+ * Modo de operación: 'auto' canjea en cuanto lee un QR válido; 'confirm' valida primero,
+ * muestra los datos del asistente y espera a que el operador confirme la entrega.
+ */
 type Mode = 'auto' | 'confirm'
+/**
+ * Máquina de estados de la pantalla:
+ * scanning → (working) → confirm | result | offline | error → scanning.
+ * La cámara solo decodifica en 'scanning'; cualquier otra fase muestra un panel encima.
+ */
 type Phase =
   | { kind: 'scanning' }
   | { kind: 'working'; label: string }
@@ -24,6 +33,7 @@ type Phase =
   | { kind: 'offline'; retry: () => void }
   | { kind: 'error'; message: string }
 
+/** Preferencia de modo por dispositivo (localStorage). */
 const MODE_KEY = 'edp:scanner-mode'
 
 /** Presentación de cada resultado del servidor. */
@@ -44,6 +54,7 @@ function present(code: ScanResult['code']): { title: string; tone: 'ok' | 'warn'
   }
 }
 
+/** Fondo de pantalla completa por tono, para que el resultado se lea de un vistazo en la barra. */
 const toneBg = {
   ok: 'bg-ok text-bg',
   info: 'bg-info text-bg',
@@ -51,15 +62,31 @@ const toneBg = {
   bad: 'bg-bad text-white',
 }
 
+/**
+ * Idempotency-Key nueva por cada intento de canje. Los reintentos del mismo intento
+ * reutilizan la misma clave para que el servidor devuelva la respuesta original.
+ */
 function newKey() {
   return `scan-${crypto.randomUUID()}`
 }
 
+/**
+ * /admin/scanner — escáner de QR para la barra. Requiere `benefitsValidate` o `benefitsRedeem`.
+ * · Con solo `benefitsValidate` funciona en modo consulta: valida (`benefit_validate`) y
+ *   muestra el resultado, pero no puede canjear ni usar el modo automático.
+ * · Con `benefitsRedeem` canjea vía `benefit_redeem` con Idempotency-Key, en modo
+ *   confirmación o automático.
+ * · Sin conexión nunca da un consumo por confirmado: muestra un bloqueo con reintento seguro.
+ * · Un token recibido por URL (?token=, desde /qr/:token) siempre pasa por confirmación,
+ *   para que abrir un enlace no canjee un beneficio sin intervención del operador.
+ * · Registra SCANNER_OPENED en auditoría y da feedback sonoro/háptico por resultado.
+ */
 export default function Scanner() {
   const { can, access } = useAuth()
   const [params, setParams] = useSearchParams()
   const canRedeem = can(P.benefitsRedeem)
 
+  // Comparte la key 'app-settings' con Configuración: al guardar allí se invalida también aquí.
   const settings = useQuery({
     queryKey: ['app-settings'],
     queryFn: async () => {
@@ -68,8 +95,11 @@ export default function Scanner() {
     },
     staleTime: 5 * 60_000,
   })
+  // Segundos que el resultado queda en pantalla antes de volver a escanear.
   const autoReturn = Number(settings.data?.scanner_auto_return_seconds ?? 4)
 
+  // Precedencia del modo: elección del operador en este dispositivo > valor por defecto
+  // global (`scanner_default_mode`) > 'confirm'. `modeTouched` indica si hubo elección local.
   const [mode, setModeState] = useState<Mode>(() => {
     try { return (localStorage.getItem(MODE_KEY) as Mode) || 'confirm' } catch { return 'confirm' }
   })
@@ -85,16 +115,22 @@ export default function Scanner() {
     setModeTouched(true)
     try { localStorage.setItem(MODE_KEY, m) } catch { /* ignorar */ }
   }
+  // Sin permiso de canje el modo automático no aplica, aunque esté guardado.
   const effectiveMode: Mode = canRedeem ? mode : 'confirm'
 
   const [phase, setPhase] = useState<Phase>({ kind: 'scanning' })
+  // Ref con la fase actual para el callback de la cámara, que se crea una sola vez y
+  // de otro modo leería un valor obsoleto.
   const phaseRef = useRef(phase)
   phaseRef.current = phase
   const [online, setOnline] = useState(navigator.onLine)
+  // Contador local de bebidas entregadas en esta sesión de pantalla (no persiste).
   const [served, setServed] = useState(0)
   const [manual, setManual] = useState('')
   const [showManual, setShowManual] = useState(false)
 
+  // Seguimiento del estado de red (con cleanup de listeners) y registro de apertura del
+  // scanner en auditoría (best-effort: un fallo no bloquea la pantalla).
   useEffect(() => {
     const on = () => setOnline(true)
     const off = () => setOnline(false)
@@ -107,6 +143,7 @@ export default function Scanner() {
     }
   }, [])
 
+  /** Muestra el resultado con su feedback (éxito, advertencia o error) y cuenta las entregas. */
   const showResult = useCallback((r: ScanResult) => {
     if (r.code === 'APPROVED') { feedbackSuccess(); setServed((n) => n + 1) }
     else if (r.code === 'VALID') feedbackSuccess()
@@ -116,6 +153,7 @@ export default function Scanner() {
   }, [])
 
   // Consumo con Idempotency-Key: un reintento tras un corte de red nunca duplica el consumo.
+  // El `retry` de la fase offline reutiliza la misma `key` a propósito.
   const redeem = useCallback(async (token: string, key: string) => {
     if (!navigator.onLine) {
       feedbackError()
@@ -130,6 +168,8 @@ export default function Scanner() {
       showResult(r)
     } catch (e) {
       const err = toAppError(e)
+      // Error de red: el canje pudo o no aplicarse en el servidor; reintentar con la misma
+      // clave es seguro. Cualquier otro error se muestra tal cual.
       if (err.network) {
         feedbackError()
         setPhase({ kind: 'offline', retry: () => void redeem(token, key) })
@@ -140,8 +180,14 @@ export default function Scanner() {
     }
   }, [effectiveMode, showResult])
 
+  /**
+   * Procesa una lectura (cámara, ingreso manual o URL). Acepta el token solo o la URL
+   * completa del QR. `forceConfirm` obliga a validar y pedir confirmación aunque el
+   * modo sea automático.
+   */
   const process = useCallback(async (raw: string, forceConfirm = false) => {
     const token = extractToken(raw)
+    // Formato inválido: se rechaza localmente sin consultar al servidor.
     if (!token) {
       feedbackError()
       setPhase({ kind: 'result', result: { ok: false, code: 'INVALID_QR', message: 'QR INVÁLIDO', server_time: new Date().toISOString(), benefit: null, attendee: null, consumption: null } })
@@ -159,6 +205,8 @@ export default function Scanner() {
     setPhase({ kind: 'working', label: 'Validando…' })
     try {
       const r = await rpc<ScanResult>('benefit_validate', { p_token: token })
+      // Solo se ofrece "Confirmar entrega" si el QR es válido y el operador puede canjear;
+      // en otro caso se muestra el resultado de la validación.
       if (r.code === 'VALID' && canRedeem) {
         feedbackSuccess()
         setPhase({ kind: 'confirm', token, result: r })
@@ -173,6 +221,7 @@ export default function Scanner() {
   }, [effectiveMode, canRedeem, redeem, showResult])
 
   // Token recibido desde /qr/:token (cámara nativa): siempre en modo confirmación.
+  // Se quita de la URL antes de procesarlo para que recargar o volver atrás no lo reenvíe.
   useEffect(() => {
     const t = params.get('token')
     if (t) {
@@ -183,7 +232,8 @@ export default function Scanner() {
 
   const backToScan = useCallback(() => setPhase({ kind: 'scanning' }), [])
 
-  // Retorno automático tras un resultado.
+  // Retorno automático tras un resultado; los rechazos quedan 3 s más para que el operador
+  // alcance a leerlos. El cleanup cancela el timer si se vuelve antes manualmente.
   useEffect(() => {
     if (phase.kind !== 'result') return
     const secs = phase.result.ok ? autoReturn : autoReturn + 3
@@ -200,6 +250,7 @@ export default function Scanner() {
         <div className="grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1 text-xs font-semibold" role="radiogroup" aria-label="Modo del scanner">
           {(['confirm', 'auto'] as const).map((m) => (
             <button key={m} role="radio" aria-checked={effectiveMode === m} disabled={!canRedeem && m === 'auto'}
+              // unlockAudio en un gesto del usuario: iOS/Safari bloquea el audio hasta entonces.
               onClick={() => { unlockAudio(); setMode(m) }}
               className={clsx('rounded-lg px-3 py-2 transition disabled:opacity-40', effectiveMode === m ? 'brand-gradient text-white' : 'text-muted')}>
               {m === 'confirm' ? 'Confirmación' : 'Automático'}
@@ -219,6 +270,7 @@ export default function Scanner() {
       )}
 
       <div className="relative flex-1 px-4">
+        {/* La cámara se pausa fuera de 'scanning' o sin red; el guard con phaseRef descarta lecturas tardías. */}
         <CameraView active={phase.kind === 'scanning' && online} onDecode={(data) => { if (phaseRef.current.kind === 'scanning') void process(data) }} />
 
         {phase.kind !== 'scanning' && (
@@ -254,6 +306,7 @@ export default function Scanner() {
               <ResultPanel result={phase.result} operator={operator}>
                 <div className="grid grid-cols-2 gap-3">
                   <Button variant="secondary" size="xl" onClick={backToScan}>Cancelar</Button>
+                  {/* Cada confirmación es un intento nuevo, con su propia Idempotency-Key. */}
                   <Button variant="success" size="xl" onClick={() => { unlockAudio(); void redeem(phase.token, newKey()) }}>Confirmar entrega</Button>
                 </div>
               </ResultPanel>
@@ -270,6 +323,7 @@ export default function Scanner() {
 
       <div className="px-4 py-4">
         {showManual ? (
+          // Ingreso manual (pegar código o URL) como alternativa si la cámara no funciona.
           <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); unlockAudio(); const v = manual; setManual(''); void process(v) }}>
             <Input value={manual} onChange={(e) => setManual(e.target.value)} placeholder="Pegar código o URL del QR" autoFocus aria-label="Código manual" />
             <Button type="submit" disabled={!manual.trim() || phase.kind !== 'scanning'}>Validar</Button>
@@ -284,6 +338,11 @@ export default function Scanner() {
   )
 }
 
+/**
+ * Panel a pantalla completa con el resultado (o la confirmación pendiente): título y color
+ * según el código, datos del asistente/beneficio/consumo y las acciones en `children`.
+ * Con `onTap`, tocar el panel vuelve al scanner; `countdown` dibuja la barra de retorno.
+ */
 function ResultPanel({ result, operator, children, onTap, countdown }: {
   result: ScanResult; operator: string; children: ReactNode; onTap?: () => void; countdown?: number
 }) {
@@ -297,6 +356,7 @@ function ResultPanel({ result, operator, children, onTap, countdown }: {
         {p.icon}
         <p className="text-3xl leading-tight font-extrabold tracking-tight sm:text-4xl">{p.title}</p>
         {result.code === 'APPROVED' && <p className="text-lg font-bold opacity-90">BEBIDA ENTREGADA</p>}
+        {/* Reintento con la misma Idempotency-Key: el servidor devolvió el resultado original sin volver a canjear. */}
         {result.idempotent_replay && <p className="text-xs opacity-80">(respuesta confirmada de un intento anterior)</p>}
       </button>
       {(a || b) && (
@@ -324,8 +384,10 @@ function ResultPanel({ result, operator, children, onTap, countdown }: {
 function CameraView({ active, onDecode }: { active: boolean; onDecode: (data: string) => void }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<QrScanner | null>(null)
+  // Ref al callback más reciente: el scanner se crea una sola vez y llamaría a uno obsoleto.
   const onDecodeRef = useRef(onDecode)
   onDecodeRef.current = onDecode
+  // Última lectura, para descartar repeticiones del mismo QR.
   const last = useRef<{ data: string; at: number }>({ data: '', at: 0 })
   const [error, setError] = useState<string | null>(null)
   const [hasFlash, setHasFlash] = useState(false)
@@ -333,6 +395,7 @@ function CameraView({ active, onDecode }: { active: boolean; onDecode: (data: st
   const [cameras, setCameras] = useState<QrScanner.Camera[]>([])
   const [camIndex, setCamIndex] = useState(0)
 
+  // Crea la instancia de qr-scanner al montar y la destruye al desmontar (libera la cámara).
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -350,6 +413,8 @@ function CameraView({ active, onDecode }: { active: boolean; onDecode: (data: st
     }
   }, [])
 
+  // Inicia o pausa la cámara según `active`. Tras el primer arranque (ya con permiso)
+  // detecta linterna y lista las cámaras disponibles; los errores se traducen a mensajes útiles.
   useEffect(() => {
     const scanner = scannerRef.current
     if (!scanner) return
@@ -372,6 +437,7 @@ function CameraView({ active, onDecode }: { active: boolean; onDecode: (data: st
     }
   }, [active, cameras.length])
 
+  /** Rota entre las cámaras disponibles; la linterna se reevalúa porque depende de la cámara. */
   const switchCamera = async () => {
     if (!scannerRef.current || cameras.length < 2) return
     const next = (camIndex + 1) % cameras.length

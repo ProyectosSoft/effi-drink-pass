@@ -8,7 +8,7 @@ import { TOKEN_AUDIENCE, TOKEN_ISSUER, peekJwtPayload, signJwt, verifyJwt } from
 import { extractToken } from './qr.ts'
 import * as v from './validation.ts'
 
-export const API_VERSION = '1.0.0'
+const API_VERSION = '1.0.0'
 const MAX_BODY_BYTES = 64 * 1024
 
 // ───────────────────────────── Puertos ──────────────────────────────────────
@@ -84,6 +84,7 @@ const RATE = {
 } satisfies Record<string, RateSpec>
 
 // ───────────────────────────── Utilidades HTTP ──────────────────────────────
+/** Respuesta JSON (204 sin cuerpo). */
 function json(status: number, body: unknown, headers: Record<string, string> = {}): Response {
   return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
@@ -91,10 +92,12 @@ function json(status: number, body: unknown, headers: Record<string, string> = {
   })
 }
 
+/** Formato de error uniforme de la API: { error: { code, message, details?, request_id } }. */
 function errorBody(err: ApiError, requestId: string) {
   return { error: { code: err.code, message: err.message, ...(err.details ? { details: err.details } : {}), request_id: requestId } }
 }
 
+/** Convierte '/v1/x/:id' en una RegExp y la lista de parámetros de ruta. */
 function compile(path: string): { pattern: RegExp; keys: string[] } {
   const keys: string[] = []
   const src = path.replace(/:([a-zA-Z_]+)/g, (_, k) => {
@@ -111,18 +114,28 @@ export function normalizePath(pathname: string): string {
   return p === '' ? '/' : p
 }
 
-function clientIp(req: Request): string | null {
-  const xff = req.headers.get('x-forwarded-for')
-  const ip = xff?.split(',')[0]?.trim() || req.headers.get('cf-connecting-ip') || req.headers.get('x-real-ip')
+/**
+ * IP del cliente para rate limiting, bloqueo por fallos y auditoría.
+ *
+ * Orden de confianza: Supabase está detrás de Cloudflare, que SOBRESCRIBE `cf-connecting-ip`
+ * con la IP real (el cliente no puede falsificarla). `x-real-ip` la fija el gateway.
+ * El primer valor de `x-forwarded-for` lo controla el cliente, por eso es solo el último recurso.
+ */
+export function clientIp(req: Request): string | null {
+  const ip = req.headers.get('cf-connecting-ip')?.trim()
+    || req.headers.get('x-real-ip')?.trim()
+    || req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
   return ip ? ip.slice(0, 64) : null
 }
 
+/** Reutiliza el X-Request-Id del cliente solo si tiene un formato seguro; si no, genera uno. */
 function safeRequestId(req: Request): string {
   const incoming = req.headers.get('x-request-id')
   if (incoming && /^[A-Za-z0-9_\-.:]{8,100}$/.test(incoming)) return incoming
   return crypto.randomUUID()
 }
 
+/** Cabeceras estándar X-RateLimit-* (y Retry-After si se excedió el límite). */
 function rateHeaders(rate?: RateInfo | null): Record<string, string> {
   if (!rate) return {}
   const h: Record<string, string> = {
@@ -134,6 +147,10 @@ function rateHeaders(rate?: RateInfo | null): Record<string, string> {
   return h
 }
 
+/**
+ * CORS por lista blanca (API_ALLOWED_ORIGINS). Nunca envía Allow-Credentials:
+ * la autenticación va en cabeceras explícitas, no en cookies.
+ */
 function corsHeaders(req: Request, allowed: string[]): Record<string, string> {
   const origin = req.headers.get('origin')
   if (!origin || !(allowed.includes(origin) || allowed.includes('*'))) return {}
@@ -147,11 +164,41 @@ function corsHeaders(req: Request, allowed: string[]): Record<string, string> {
   }
 }
 
-async function readBody(req: Request, form = false): Promise<unknown> {
+/**
+ * Lee el cuerpo como texto cortando en MAX_BODY_BYTES mientras llega el stream.
+ * Así un envío `Transfer-Encoding: chunked` (sin Content-Length) no puede obligar a
+ * cargar en memoria un cuerpo arbitrariamente grande antes de rechazarlo.
+ */
+async function readLimitedText(req: Request): Promise<string> {
+  const tooLarge = () => new ApiError(413, 'PAYLOAD_TOO_LARGE', 'El cuerpo excede 64 KB')
   const len = Number(req.headers.get('content-length') ?? '0')
-  if (len > MAX_BODY_BYTES) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', 'El cuerpo excede 64 KB')
-  const text = await req.text()
-  if (new TextEncoder().encode(text).length > MAX_BODY_BYTES) throw new ApiError(413, 'PAYLOAD_TOO_LARGE', 'El cuerpo excede 64 KB')
+  if (len > MAX_BODY_BYTES) throw tooLarge()
+  if (!req.body) return ''
+  const reader = req.body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel().catch(() => {})
+      throw tooLarge()
+    }
+    chunks.push(value)
+  }
+  const bytes = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    bytes.set(c, offset)
+    offset += c.byteLength
+  }
+  return new TextDecoder().decode(bytes)
+}
+
+/** Lee y parsea el cuerpo: JSON (por defecto) o form-urlencoded (solo /oauth/token). */
+async function readBody(req: Request, form = false): Promise<unknown> {
+  const text = await readLimitedText(req)
   const ctype = (req.headers.get('content-type') ?? '').toLowerCase()
   if (form && ctype.startsWith('application/x-www-form-urlencoded')) {
     return Object.fromEntries(new URLSearchParams(text))
@@ -187,6 +234,12 @@ type AuthInput =
   | { type: 'user'; auth_user_id: string; jwt: string }
   | { type: 'none' }
 
+/**
+ * Identifica al llamante sin consultar permisos todavía:
+ *  - X-API-Key: client_id.client_secret (se valida en BD contra el hash).
+ *  - Bearer con iss propio: access token OAuth2 firmado por esta API (HS256).
+ *  - Cualquier otro Bearer: JWT de Supabase Auth (staff), validado por el servidor de Auth.
+ */
 async function resolveAuth(req: Request, db: DbPort, config: AppConfig): Promise<AuthInput> {
   const apiKey = req.headers.get('x-api-key')
   if (apiKey) {
@@ -217,6 +270,10 @@ async function resolveAuth(req: Request, db: DbPort, config: AppConfig): Promise
 
 type BeginResult = { ok: boolean; error?: string; principal?: Principal; rate?: RateInfo | null }
 
+/**
+ * Una sola RPC que valida la credencial/usuario (revocación, expiración, integración activa),
+ * aplica el rate limit en BD y devuelve el principal con sus scopes vigentes.
+ */
 async function beginRequest(db: DbPort, auth: AuthInput, rate: RateSpec | undefined, meta: {
   ip: string | null; ua: string | null; requestId: string; issuingToken?: boolean
 }): Promise<BeginResult> {
@@ -235,6 +292,7 @@ async function beginRequest(db: DbPort, auth: AuthInput, rate: RateSpec | undefi
   })
 }
 
+/** Traduce el motivo de rechazo de api_begin_request a un error HTTP sin filtrar detalles internos. */
 function authFailure(error: string | undefined): ApiError {
   switch (error) {
     case 'USER_NOT_AUTHORIZED':
@@ -255,15 +313,21 @@ function actor(ctx: Ctx): Principal {
   return ctx.principal
 }
 
+/** Separa la paginación del resto de filtros de búsqueda. */
 function paged(q: Record<string, unknown>) {
   const { page, page_size, ...filters } = q
   return { page: page as number, page_size: page_size as number, filters }
 }
 
+/** Parámetro de ruta validado como UUID (400 si no lo es). */
 function uuidParam(ctx: Ctx, key = 'id'): string {
   return v.parse(v.uuidSchema, ctx.params[key], 'path')
 }
 
+/**
+ * Validar o consumir un beneficio, identificado por id (ruta) o por el token del QR (cuerpo).
+ * El consumo es atómico en BD y admite Idempotency-Key para reintentos seguros.
+ */
 async function benefitAction(ctx: Ctx, mode: 'validate' | 'redeem', benefitId: string | null): Promise<Response> {
   const body = v.parse(benefitId ? v.benefitActionSchema : v.tokenActionSchema, await ctx.body(), 'body')
   let token: string | null = null
@@ -307,6 +371,7 @@ async function readBack(ctx: Ctx, id: string): Promise<unknown> {
   return ctx.db.rpc('api_get_attendee', { p_actor: actor(ctx), p_id: id })
 }
 
+/** Exige un usuario del staff (JWT de Supabase Auth) y devuelve su JWT para ejecutar RPC con sus permisos. */
 function staffOnly(ctx: Ctx): string {
   if (ctx.principal.type !== 'user' || !ctx.jwt) {
     throw new ApiError(403, 'STAFF_ONLY', 'Este endpoint requiere un usuario del staff (JWT de Supabase Auth)')
@@ -314,6 +379,7 @@ function staffOnly(ctx: Ctx): string {
   return ctx.jwt
 }
 
+/** Tabla de rutas: método, patrón, autenticación requerida, scope y límite de tasa de cada endpoint. */
 function buildRoutes(): Route[] {
   const routes: Route[] = []
   const add = (method: string, path: string, opts: Omit<Route, 'method' | 'pattern' | 'keys' | 'handler'>, handler: Handler) =>
@@ -448,6 +514,10 @@ function buildRoutes(): Route[] {
 }
 
 // ───────────────────────────── OAuth2 client_credentials ────────────────────
+/**
+ * POST /v1/oauth/token (grant_type=client_credentials). Admite credenciales en el cuerpo o en
+ * Authorization: Basic. Los fallos se cuentan por IP y bloquean temporalmente (api_auth_blocked).
+ */
 async function tokenEndpoint(req: Request, db: DbPort, config: AppConfig, ip: string | null, requestId: string): Promise<Response> {
   const oauthError = (status: number, error: string, description: string, headers: Record<string, string> = {}) =>
     json(status, { error, error_description: description, request_id: requestId }, { 'Cache-Control': 'no-store', ...headers })
@@ -511,6 +581,10 @@ async function tokenEndpoint(req: Request, db: DbPort, config: AppConfig, ip: st
 }
 
 // ───────────────────────────── Aplicación ───────────────────────────────────
+/**
+ * Crea el manejador HTTP de la API. Flujo por solicitud: CORS → enrutado → autenticación →
+ * rate limit → scope → handler. Todos los errores salen con el mismo formato y X-Request-Id.
+ */
 export function createApi(db: DbPort, config: AppConfig) {
   const routes = buildRoutes()
   const log = config.log ?? ((e) => console.log(JSON.stringify(e)))

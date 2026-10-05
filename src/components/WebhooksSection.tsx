@@ -5,24 +5,34 @@ import { Badge, Button, Checkbox, CopyButton, ErrorBox, Field, Input, Modal, Spi
 import { fmtDateTime } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
 
+/** Suscripción de webhook. Del secreto solo se expone `secret_hint` (últimos caracteres), nunca el valor completo. */
 type Subscription = { id: string; integration_id: string; url: string; events: string[]; description: string | null; active: boolean; secret_hint: string; created_at: string }
+/** Intento(s) de entrega de un evento a una suscripción, gestionados por el despachador programado. */
 type Delivery = { id: number; event_id: number; event_type: string; status: string; attempts: number; next_attempt_at: string; last_status_code: number | null; last_error: string | null; delivered_at: string | null; created_at: string }
 
+/** Color del badge según el estado de la entrega (estados desconocidos → neutro). */
 const deliveryTone = { delivered: 'ok', pending: 'info', sending: 'info', failed: 'bad' } as const
 
-/** Webhooks salientes de una integración (evento benefit.consumed). */
+/**
+ * Webhooks salientes de una integración (evento benefit.consumed).
+ * @param canSubscribe la integración tiene el scope consumptions:read; sin él no se permiten
+ *   suscripciones (un webhook no puede revelar datos que la integración no podría leer por API).
+ */
 export function WebhooksSection({ integrationId, canSubscribe }: { integrationId: string; canSubscribe: boolean }) {
   const qc = useQueryClient()
   const toast = useToast()
   const [creating, setCreating] = useState(false)
+  /** Secreto en claro recién creado/rotado; solo vive en memoria mientras el modal está abierto. */
   const [secret, setSecret] = useState<string | null>(null)
   const [viewing, setViewing] = useState<Subscription | null>(null)
+  // Lectura directa de la tabla: la política RLS exige integrations:manage. El secreto vive en otra tabla (privada).
   const subs = useQuery({
     queryKey: ['webhooks', integrationId],
     queryFn: async () => (await query<Subscription[]>(supabase.from('webhook_subscriptions').select('*').eq('integration_id', integrationId).order('created_at'))).data,
   })
   const refresh = () => void qc.invalidateQueries({ queryKey: ['webhooks', integrationId] })
 
+  /** Pausa/activa la suscripción; la RPC reemplaza todos los campos, por eso se reenvían los actuales. */
   const toggle = async (s: Subscription) => {
     try {
       await rpc('update_webhook_subscription', { p_id: s.id, p_url: s.url, p_events: s.events, p_description: s.description, p_active: !s.active })
@@ -52,6 +62,7 @@ export function WebhooksSection({ integrationId, canSubscribe }: { integrationId
                 {s.active ? <Badge tone="ok">Activo</Badge> : <Badge>Pausado</Badge>}
                 <Button size="sm" variant="ghost" onClick={() => setViewing(s)}>Entregas</Button>
                 <Button size="sm" variant="ghost" onClick={() => toggle(s)}>{s.active ? 'Pausar' : 'Activar'}</Button>
+                {/* Rotar invalida el secreto anterior; el nuevo se muestra una única vez. */}
                 <Button size="sm" variant="ghost" icon={<RotateCw className="size-3.5" />} onClick={async () => {
                   try { setSecret((await rpc<{ secret: string }>('rotate_webhook_secret', { p_id: s.id })).secret); refresh() }
                   catch (e) { toast(e instanceof Error ? e.message : String(e), 'bad') }
@@ -76,6 +87,7 @@ export function WebhooksSection({ integrationId, canSubscribe }: { integrationId
   )
 }
 
+/** Alta de una suscripción. El servidor genera el secreto de firma y lo devuelve solo en esta respuesta. */
 function CreateModal({ integrationId, onClose, onCreated }: { integrationId: string; onClose: () => void; onCreated: (secret: string) => void }) {
   const [url, setUrl] = useState('https://')
   const [description, setDescription] = useState('')
@@ -85,6 +97,8 @@ function CreateModal({ integrationId, onClose, onCreated }: { integrationId: str
   return (
     <Modal open onClose={onClose} title="Nuevo webhook" footer={<>
       <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+      {/* Pre-validación de UX (HTTPS + host con dominio). La validación definitiva (anti-SSRF: sin IPs literales,
+          credenciales ni hosts internos) la hace el servidor en create_webhook_subscription. */}
       <Button loading={busy} disabled={!consumed || !/^https:\/\/[^\s/]+\.[^\s/]+/.test(url)} onClick={async () => {
         setBusy(true); setError(null)
         try {
@@ -109,8 +123,10 @@ function CreateModal({ integrationId, onClose, onCreated }: { integrationId: str
   )
 }
 
+/** Historial de las últimas 100 entregas de una suscripción, con reintento manual de las fallidas. */
 function DeliveriesModal({ sub, onClose }: { sub: Subscription; onClose: () => void }) {
   const toast = useToast()
+  // Se refresca cada 15 s para ver el avance de los reintentos del despachador sin recargar.
   const list = useQuery({
     queryKey: ['webhook-deliveries', sub.id],
     queryFn: () => rpc<Delivery[]>('list_webhook_deliveries', { p_subscription_id: sub.id, p_limit: 100 }),

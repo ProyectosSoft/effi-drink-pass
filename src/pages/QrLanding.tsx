@@ -14,8 +14,10 @@ import { PERMISSIONS as P } from '@/lib/types'
 export default function QrLanding() {
   const { token = '' } = useParams()
   const { loading, can } = useAuth()
+  // Solo se acepta un token con formato válido; cualquier otra cosa se trata como QR desconocido.
   const valid = extractToken(token)
 
+  // Esperar a que cargue la sesión para no mostrar el mensaje genérico a staff legítimo.
   if (loading) return <Spinner />
   if (valid && (can(P.benefitsValidate) || can(P.benefitsRedeem))) {
     return <Navigate to={`/admin/scanner?token=${encodeURIComponent(valid)}`} replace />
@@ -26,6 +28,7 @@ export default function QrLanding() {
         <p>Este código es un beneficio personal de bebida. Debe ser escaneado por el personal autorizado en la barra.</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <Link to="/my-benefits"><Button>Ver mis beneficios</Button></Link>
+          {/* Tras el login, `next` devuelve al staff a este mismo QR para continuar al scanner. */}
           <Link to={`/login?staff=1&next=${encodeURIComponent(`/qr/${token}`)}`}><Button variant="secondary" icon={<ScanLine className="size-4" />}>Soy staff</Button></Link>
         </div>
       </EmptyState>

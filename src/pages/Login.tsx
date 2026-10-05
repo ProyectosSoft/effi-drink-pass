@@ -7,13 +7,25 @@ import { useAuth } from '@/lib/auth'
 import { config } from '@/lib/config'
 import { supabase, toAppError } from '@/lib/supabase'
 
+/** Método de acceso: código OTP por email (asistentes) o contraseña (pensado para staff). */
 type Mode = 'otp' | 'password'
 
+/**
+ * Destino tras iniciar sesión. Solo se aceptan rutas internas (evita open redirect):
+ * deben empezar por una única "/" y no contener "\" ni caracteres de control, porque los
+ * navegadores interpretan "/\evil.com" o "/\t/evil.com" como URLs de otro dominio.
+ */
 function safeNext(next: string | null): string {
-  // Solo rutas internas (evita open redirect).
-  return next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard'
+  return next && /^\/(?![/\\])/.test(next) && !/[\\\u0000-\u001f\u007f]/.test(next) ? next : '/dashboard'
 }
 
+/**
+ * /login — acceso público con cuenta propia de Effi Drink Pass (no usa el login de Effi).
+ * · Modo OTP: envía un código de 6 dígitos + magic link al email y lo verifica.
+ * · Modo contraseña: para staff o usuarios que ya definieron contraseña en "Mi cuenta".
+ * `?staff=1` abre directamente el modo contraseña; `?next=` define el destino tras el login
+ * (saneado con `safeNext`). Si ya hay sesión, redirige de inmediato a ese destino.
+ */
 export function Login() {
   const { session, loading } = useAuth()
   const [params] = useSearchParams()
@@ -27,14 +39,17 @@ export function Login() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
+  // Cuenta regresiva de 1 s para habilitar "Reenviar código"; el cleanup evita timers huérfanos.
   useEffect(() => {
     if (cooldown <= 0) return
     const t = setTimeout(() => setCooldown((c) => c - 1), 1000)
     return () => clearTimeout(t)
   }, [cooldown])
 
+  // Al verificar el OTP o la contraseña, el cambio de sesión re-renderiza y esta línea redirige.
   if (!loading && session) return <Navigate to={next} replace />
 
+  /** Envuelve una acción async gestionando `busy` y normalizando el error para mostrarlo. */
   const run = async (fn: () => Promise<void>) => {
     setBusy(true)
     setError(null)
@@ -47,9 +62,12 @@ export function Login() {
     }
   }
 
+  /** Solicita el OTP. También se usa para "Reenviar código" (sin evento de formulario). */
   const sendCode = (e?: FormEvent) => {
     e?.preventDefault()
     void run(async () => {
+      // El magic link del correo vuelve a /login conservando `next`; el email se normaliza
+      // en minúsculas para que coincida con el registro del asistente.
       const { error } = await supabase.auth.signInWithOtp({
         email: email.trim().toLowerCase(),
         options: { shouldCreateUser: true, emailRedirectTo: `${config.publicAppUrl}/login?next=${encodeURIComponent(next)}` },
@@ -63,6 +81,7 @@ export function Login() {
   const verify = (e: FormEvent) => {
     e.preventDefault()
     void run(async () => {
+      // Mensaje genérico: no se distingue entre código inválido, expirado o email desconocido.
       const { error } = await supabase.auth.verifyOtp({ email: email.trim().toLowerCase(), token: code.trim(), type: 'email' })
       if (error) throw new Error('Código inválido o expirado. Solicita uno nuevo.')
     })
@@ -71,6 +90,7 @@ export function Login() {
   const passwordLogin = (e: FormEvent) => {
     e.preventDefault()
     void run(async () => {
+      // Mensaje genérico para no revelar si el email existe (anti-enumeración).
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim().toLowerCase(), password })
       if (error) throw new Error('Email o contraseña incorrectos.')
     })

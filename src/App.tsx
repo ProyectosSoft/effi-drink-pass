@@ -8,6 +8,8 @@ import { Landing } from './pages/Landing'
 import { Login } from './pages/Login'
 import { NotFound } from './pages/NotFound'
 
+// Las páginas públicas de entrada se importan de forma estática (primer render rápido);
+// el resto se carga bajo demanda en chunks separados (code splitting).
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const MyBenefits = lazy(() => import('./pages/MyBenefits'))
 const QrLanding = lazy(() => import('./pages/QrLanding'))
@@ -27,14 +29,25 @@ const Audit = lazy(() => import('./pages/admin/Audit'))
 const Reports = lazy(() => import('./pages/admin/Reports'))
 const Settings = lazy(() => import('./pages/admin/Settings'))
 
+/**
+ * Envuelve una ruta exigiendo al menos uno de los permisos indicados.
+ * Es solo control de navegación/UI: aunque se saltara, los datos siguen protegidos por RLS y RPC en Postgres.
+ */
 const guard = (perms: string[], el: ReactNode) => <RequirePermission anyOf={perms}>{el}</RequirePermission>
 
+/**
+ * Tabla de rutas de la aplicación.
+ * - Públicas: landing, login, página del QR y documentación de la API.
+ * - Asistente autenticado: dashboard, mis beneficios y cuenta.
+ * - /admin: requiere staff y, por sección, el permiso correspondiente.
+ */
 export function App() {
   return (
     <Suspense fallback={<Spinner />}>
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        {/* URL que codifica el QR; /r/ es un alias corto con el mismo comportamiento. */}
         <Route path="/qr/:token" element={<QrLanding />} />
         <Route path="/r/:token" element={<QrLanding />} />
         <Route path="/api-docs" element={<ApiDocs />} />
@@ -42,6 +55,7 @@ export function App() {
         <Route path="/my-benefits" element={<RequireAuth><MyBenefits /></RequireAuth>} />
         <Route path="/account" element={<RequireAuth><PublicShell><Account /></PublicShell></RequireAuth>} />
 
+        {/* Rutas anidadas: AdminShell renderiza el menú y un <Outlet /> para la sección activa. */}
         <Route path="/admin" element={<RequireAuth><RequireStaff><AdminShell /></RequireStaff></RequireAuth>}>
           <Route index element={<AdminIndex />} />
           <Route path="scanner" element={guard([P.benefitsValidate, P.benefitsRedeem], <Scanner />)} />
@@ -63,7 +77,10 @@ export function App() {
   )
 }
 
-/** Operadores sin estadísticas van directo al scanner. */
+/**
+ * Portada de /admin. Operadores sin estadísticas van directo al scanner.
+ * Staff sin ninguno de estos permisos ve el aviso de acceso denegado de RequirePermission.
+ */
 function AdminIndex() {
   return (
     <RequirePermission anyOf={[P.statisticsRead, P.benefitsRedeem, P.benefitsValidate]}>
@@ -72,6 +89,7 @@ function AdminIndex() {
   )
 }
 
+/** Separado de AdminIndex para leer permisos solo después de pasar el guard. */
 function AdminIndexInner() {
   const { can } = useAuth()
   if (!can(P.statisticsRead)) return <Navigate to="/admin/scanner" replace />

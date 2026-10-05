@@ -2,12 +2,22 @@
 import { z } from 'zod'
 import { ApiError } from './errors.ts'
 
+/** Texto recortado con longitud máxima. */
 const trimmed = (max: number) => z.string().trim().max(max)
+/** Texto opcional que también acepta null (para borrar el valor). */
 const nullableTrimmed = (max: number) => trimmed(max).nullable().optional()
+
+/**
+ * Escapa los comodines de LIKE (`\`, `%`, `_`) para que una búsqueda por texto sea literal.
+ * PostgreSQL usa `\` como carácter de escape por defecto en LIKE.
+ */
+export const escapeLike = (s: string) => s.replace(/[\\%_]/g, (c) => `\\${c}`)
+/** Texto de búsqueda parcial (en BD se usa dentro de LIKE '%…%'). */
+const likeText = (min: number, max: number) => z.string().trim().min(min).max(max).transform(escapeLike)
 
 export const uuidSchema = z.uuid()
 
-export const attendeeFields = {
+const attendeeFields = {
   nombres: trimmed(120).min(1),
   apellidos: nullableTrimmed(120),
   email: z.email().max(254).nullable().optional(),
@@ -30,9 +40,17 @@ export const patchAttendeeSchema = z
 
 export const setEventDaysSchema = z.strictObject({ event_day_ids: z.array(z.uuid()).max(31) })
 
+/**
+ * Metadatos libres que una integración adjunta a un consumo (p. ej. punto de venta).
+ * Acotados en número de claves y tamaño porque se guardan en tablas inmutables (consumos y auditoría).
+ */
+const actionMetadata = z
+  .record(z.string().min(1).max(64), z.union([z.string().max(200), z.number(), z.boolean(), z.null()]))
+  .refine((m) => Object.keys(m).length <= 20, { message: 'Máximo 20 claves en metadata' })
+
 export const benefitActionSchema = z.strictObject({
   token: z.string().trim().min(1).max(500).optional(),
-  metadata: z.record(z.string(), z.union([z.string().max(200), z.number(), z.boolean(), z.null()])).optional(),
+  metadata: actionMetadata.optional(),
 })
 
 export const tokenActionSchema = benefitActionSchema.extend({ token: z.string().trim().min(1).max(500) })
@@ -66,9 +84,9 @@ export const attendeeQuerySchema = z.strictObject({
   effi_id: shortText.optional(),
   effi_username: shortText.optional(),
   email: shortText.optional(),
-  q: z.string().trim().min(2).max(100).optional(),
+  q: likeText(2, 100).optional(),
   tipo_acceso: shortText.optional(),
-  empresa: shortText.optional(),
+  empresa: likeText(1, 200).optional(),
   activo: z.enum(['true', 'false']).optional(),
   event_day_id: z.uuid().optional(),
   updated_since: z.iso.datetime({ offset: true }).optional(),
@@ -102,7 +120,7 @@ export const statisticsQuerySchema = z.strictObject({
   status: z.enum(['PENDING', 'CONSUMED', 'EXPIRED', 'CANCELLED']).optional(),
   effi_id: shortText.optional(),
   effi_username: shortText.optional(),
-  empresa: shortText.optional(),
+  empresa: likeText(1, 200).optional(),
   tipo_acceso: shortText.optional(),
 })
 

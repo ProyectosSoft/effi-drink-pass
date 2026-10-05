@@ -10,12 +10,19 @@ type Profile = { id: string; auth_user_id: string | null; nombres: string; apell
 type Role = { id: string; name: string; description: string | null; active: boolean }
 type UserRole = { user_id: string; role_id: string }
 
+/**
+ * /admin/users — gestión de usuarios del staff. Requiere `usersManage`.
+ * El staff se pre-registra por email (`upsert_staff_profile`) y se le asignan roles
+ * (`set_user_roles`); la cuenta de auth queda vinculada en su primer ingreso con ese email.
+ */
 export default function Users() {
   const qc = useQueryClient()
+  // Perfil en edición, 'new' para alta, o null con el modal cerrado.
   const [editing, setEditing] = useState<Profile | 'new' | null>(null)
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: async () => (await query<Profile[]>(supabase.from('profiles').select('*').order('nombres'))).data })
   const roles = useQuery({ queryKey: ['roles'], queryFn: async () => (await query<Role[]>(supabase.from('roles').select('*').order('name'))).data })
   const userRoles = useQuery({ queryKey: ['user-roles'], queryFn: async () => (await query<UserRole[]>(supabase.from('user_roles').select('user_id,role_id'))).data })
+  // role_id → nombre, para pintar los badges de roles de cada usuario.
   const roleName = new Map(roles.data?.map((r) => [r.id, r.name]))
 
   return (
@@ -42,6 +49,7 @@ export default function Users() {
           </table>
         )}
       </div>
+      {/* Se monta solo al editar para que el estado del formulario se inicialice con cada perfil. */}
       {editing && (
         <UserModal profile={editing === 'new' ? null : editing} roles={roles.data ?? []}
           currentRoles={editing === 'new' ? [] : userRoles.data?.filter((u) => u.user_id === editing.id).map((u) => u.role_id) ?? []}
@@ -52,6 +60,11 @@ export default function Users() {
   )
 }
 
+/**
+ * Alta/edición de un usuario del staff y sus roles. Solo se ofrecen roles activos.
+ * El propio usuario no puede desactivarse (evita quedarse sin acceso); el servidor
+ * aplica igualmente sus propias validaciones.
+ */
 function UserModal({ profile, roles, currentRoles, onClose, onSaved }: {
   profile: Profile | null; roles: Role[]; currentRoles: string[]; onClose: () => void; onSaved: () => void
 }) {
@@ -73,6 +86,8 @@ function UserModal({ profile, roles, currentRoles, onClose, onSaved }: {
         p_id: profile?.id ?? null, p_email: f.email.trim(), p_nombres: f.nombres.trim(), p_apellidos: f.apellidos.trim(),
         p_telefono: f.telefono.trim() || null, p_activo: activo,
       })
+      // Dos RPC secuenciales: primero el perfil (devuelve su id, también en altas) y luego
+      // el conjunto completo de roles, que reemplaza al anterior.
       await rpc('set_user_roles', { p_profile_id: id, p_role_ids: selected })
       toast(profile ? 'Usuario actualizado' : 'Usuario creado. Debe ingresar con ese email para activar su cuenta.')
       onSaved()

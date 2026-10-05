@@ -4,10 +4,17 @@ import { Button, EmptyState } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { PERMISSIONS as P } from '@/lib/types'
 
-/** /dashboard: distribuye según el tipo de cuenta (asistente, staff o ambos). */
+/**
+ * /dashboard: distribuye según el tipo de cuenta (asistente, staff o ambos).
+ * · Solo asistente → /my-benefits.
+ * · Solo staff → /admin si puede ver estadísticas (`statisticsRead`); si no, directo al scanner.
+ * · Ninguno de los dos → aviso de que el email no está registrado.
+ * · Ambos → tarjetas para elegir entre beneficios propios y panel de administración.
+ */
 export default function Dashboard() {
   const { access, isStaff, isAttendee, can, session } = useAuth()
 
+  // Redirecciones con `replace` para que "atrás" no vuelva a este distribuidor.
   if (isAttendee && !isStaff) return <Navigate to="/my-benefits" replace />
   if (isStaff && !isAttendee) return <Navigate to={can(P.statisticsRead) ? '/admin' : '/admin/scanner'} replace />
 

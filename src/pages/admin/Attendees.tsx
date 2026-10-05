@@ -9,13 +9,24 @@ import { fullName } from '@/lib/format'
 import { query, supabase } from '@/lib/supabase'
 import { PERMISSIONS as P, type Attendee, type EventDay } from '@/lib/types'
 
+/** Tamaño de página del listado. */
 const PAGE = 25
 
-/** Escapa comodines de ILIKE y caracteres especiales del filtro or() de PostgREST. */
+/**
+ * Escapa comodines de ILIKE y caracteres especiales del filtro or() de PostgREST.
+ * Las comas y paréntesis se reemplazan por espacios porque romperían la sintaxis de or()
+ * y permitirían inyectar condiciones adicionales en el filtro.
+ */
 function likeSafe(s: string) {
   return s.replace(/[%_\\]/g, (m) => `\\${m}`).replace(/[,()*]/g, ' ').trim()
 }
 
+/**
+ * /admin/attendees — listado paginado de asistentes con búsqueda y filtros.
+ * Requiere `attendeesRead`. Con `attendeesImport` muestra el acceso a Importar y con
+ * `attendeesWrite` permite crear asistentes (modal con AttendeeForm).
+ * Consulta la tabla `attendees` directamente (RLS en el servidor aplica los permisos).
+ */
 export default function Attendees() {
   const { can } = useAuth()
   const nav = useNavigate()
@@ -27,13 +38,16 @@ export default function Attendees() {
   const [page, setPage] = useState(1)
   const [creating, setCreating] = useState(false)
 
+  // Debounce de 300 ms de la búsqueda; al cambiar el término se vuelve a la página 1.
   useEffect(() => {
     const t = setTimeout(() => { setDebounced(search); setPage(1) }, 300)
     return () => clearTimeout(t)
   }, [search])
 
   const list = useQuery({
+    // Prefijo 'attendees' compartido: invalidarlo refresca todas las páginas/filtros cacheados.
     queryKey: ['attendees', debounced, tipo, activo, page],
+    // Mantiene la página anterior visible mientras carga la siguiente (sin parpadeo).
     placeholderData: keepPreviousData,
     queryFn: async () => {
       let q = supabase.from('attendees').select('*', { count: 'exact' })
@@ -41,9 +55,11 @@ export default function Attendees() {
       if (s) q = q.or(`nombres.ilike.%${s}%,apellidos.ilike.%${s}%,email.ilike.%${s}%,effi_id.ilike.%${s}%,effi_username.ilike.%${s}%,empresa.ilike.%${s}%`)
       if (tipo) q = q.eq('tipo_acceso', tipo)
       if (activo) q = q.eq('activo', activo === 'true')
+      // range() es inclusivo en ambos extremos; count: 'exact' alimenta la paginación.
       return query<Attendee[]>(q.order('apellidos').order('nombres').range((page - 1) * PAGE, page * PAGE - 1))
     },
   })
+  // Días del evento para el formulario de alta (comparte caché 'event-days' con otras pantallas).
   const days = useQuery({
     queryKey: ['event-days'],
     queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data,
@@ -80,6 +96,7 @@ export default function Attendees() {
               {list.data?.data.map((a) => (
                 <tr key={a.id} className="cursor-pointer" onClick={() => nav(`/admin/attendees/${a.id}`)}>
                   <td className="font-medium">
+                    {/* stopPropagation evita navegar dos veces (Link + onClick de la fila). */}
                     <Link to={`/admin/attendees/${a.id}`} className="hover:text-brand" onClick={(e) => e.stopPropagation()}>{fullName(a)}</Link>
                     {a.is_demo && <Badge tone="accent" className="ml-2">DEMO</Badge>}
                   </td>

@@ -7,18 +7,26 @@ import { fmtEventDate, hhmm } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
 import { PERMISSIONS as P, type EventDay } from '@/lib/types'
 
+/**
+ * /admin/settings — configuración. Accesible con `settingsManage` o `eventDaysWrite`.
+ * · Reloj oficial del servidor (RPC `server_time`, cada 10 s): referencia de todas las validaciones.
+ * · Días del evento: alta/edición con `upsert_event_day` (requiere `eventDaysWrite`).
+ * · Ajustes de la app (`app_settings`, guardados con `update_setting`; requiere `settingsManage`).
+ */
 export default function Settings() {
   const { can } = useAuth()
   const qc = useQueryClient()
   const toast = useToast()
   const [editing, setEditing] = useState<EventDay | 'new' | null>(null)
   const days = useQuery({ queryKey: ['event-days'], queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data })
+  // Ajustes como objeto clave → valor (jsonb).
   const settings = useQuery({
     queryKey: ['app-settings'],
     queryFn: async () => Object.fromEntries((await query<{ key: string; value: unknown }[]>(supabase.from('app_settings').select('key,value'))).data.map((r) => [r.key, r.value])),
   })
   const clock = useQuery({ queryKey: ['server-time'], queryFn: () => rpc<{ now: string; today: string; local_time: string; timezone: string }>('server_time'), refetchInterval: 10_000 })
 
+  // Solo las claves editadas viven en `draft`; el resto se muestra desde el servidor.
   const [draft, setDraft] = useState<Record<string, string>>({})
   const val = (k: string) => draft[k] ?? String(settings.data?.[k] ?? '')
   const [saving, setSaving] = useState(false)
@@ -28,6 +36,8 @@ export default function Settings() {
     setSaving(true)
     setError(null)
     try {
+      // Una RPC por clave modificada; los inputs entregan texto, así que el ajuste numérico
+      // se convierte antes de guardarlo como jsonb.
       for (const [k, v] of Object.entries(draft)) {
         const value = k === 'scanner_auto_return_seconds' ? Number(v) : v
         await rpc('update_setting', { p_key: k, p_value: value })
@@ -98,6 +108,11 @@ export default function Settings() {
   )
 }
 
+/**
+ * Alta/edición de un día del evento (hora de Colombia). Valores por defecto 08:00–20:00
+ * cuando no hay horario; el botón se deshabilita si el fin no es posterior al inicio
+ * (comparación lexicográfica válida para el formato HH:MM).
+ */
 function DayModal({ day, onClose, onSaved }: { day: EventDay | null; onClose: () => void; onSaved: () => void }) {
   const [date, setDate] = useState(day?.date ?? '')
   const [name, setName] = useState(day?.name ?? '')

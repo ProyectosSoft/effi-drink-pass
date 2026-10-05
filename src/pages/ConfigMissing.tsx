@@ -1,3 +1,7 @@
+/**
+ * Pantalla que se muestra en lugar de la app cuando faltan las variables públicas de Supabase
+ * en el build. Explica cómo configurarlas en local y en GitHub Pages.
+ */
 export function ConfigMissing() {
   return (
     <main className="mx-auto flex min-h-dvh max-w-xl flex-col justify-center gap-4 p-6">

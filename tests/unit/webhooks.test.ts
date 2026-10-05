@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { dispatchWebhooks, isAllowedTarget, signWebhook, verifyWebhook, webhookBody, type Claimed, type WebhookDbPort } from '../../supabase/functions/_shared/webhooks.ts'
+import {
+  dispatchWebhooks, isAllowedTarget, isPrivateIp, resolvesToPublicIps, signWebhook, verifyWebhook, webhookBody,
+  type Claimed, type WebhookDbPort,
+} from '../../supabase/functions/_shared/webhooks.ts'
 
 const claimed = (id: number, url = 'https://hooks.example.com/x'): Claimed => ({
   delivery_id: id, attempt: 1, url, secret: 'whsec_test_secret', event_id: 100 + id, event_type: 'benefit.consumed',
@@ -68,8 +71,59 @@ describe('despachador', () => {
     const summary = await dispatchWebhooks(db, { fetchFn, timeoutMs: 50 })
     expect(summary.retrying).toBe(4)
     expect(reports.sort((a, b) => a.id - b.id).map((r) => [r.id, r.status, r.error])).toEqual([
-      [1, 500, 'HTTP 500'], [2, null, 'connection refused'], [3, null, 'timeout 50 ms'], [4, null, 'URL no permitida'],
+      // El error de red se reporta genérico: el texto interno de fetch no se expone al admin.
+      [1, 500, 'HTTP 500'], [2, null, 'Error de conexión'], [3, null, 'timeout 50 ms'], [4, null, 'URL no permitida'],
     ])
+  })
+
+  it('SSRF: no entrega si el nombre resuelve a una IP privada o no resuelve', async () => {
+    const dns: Record<string, string[]> = {
+      'publico.example.com': ['93.184.216.34'],
+      'metadata.attacker.example': ['169.254.169.254'],
+      'mixto.example.com': ['93.184.216.34', '10.0.0.7'],
+      'v6.example.com': ['::ffff:127.0.0.1'],
+    }
+    const resolve = async (h: string) => {
+      if (!dns[h]) throw new Error('NXDOMAIN')
+      return dns[h]
+    }
+    const { db, reports } = fakeDb([[
+      claimed(1, 'https://publico.example.com/x'), claimed(2, 'https://metadata.attacker.example/x'),
+      claimed(3, 'https://mixto.example.com/x'), claimed(4, 'https://v6.example.com/x'), claimed(5, 'https://noexiste.example.com/x'),
+    ]])
+    const called: string[] = []
+    const fetchFn = (async (url: string) => {
+      called.push(url)
+      return new Response(null, { status: 204 })
+    }) as unknown as typeof fetch
+    const summary = await dispatchWebhooks(db, { fetchFn, resolve })
+    expect(called).toEqual(['https://publico.example.com/x'])
+    expect(summary).toEqual({ claimed: 5, delivered: 1, retrying: 4, failed: 0 })
+    expect(reports.filter((r) => !r.ok).every((r) => r.error === 'Destino no permitido o no resoluble')).toBe(true)
+  })
+})
+
+describe('protección SSRF', () => {
+  it('el punto final del host no evade la lista de nombres internos', () => {
+    for (const bad of ['https://localhost./x', 'https://metadata.google.internal./x', 'https://1.0.0.127.in-addr.arpa/x']) {
+      expect(isAllowedTarget(bad)).toBe(false)
+    }
+  })
+
+  it('clasifica IPs privadas y públicas (v4, v6 e IPv4 embebida)', () => {
+    for (const ip of ['10.1.2.3', '127.0.0.1', '169.254.169.254', '172.20.0.1', '192.168.1.1', '100.64.0.1', '0.0.0.0',
+      '224.0.0.1', '255.255.255.255', '::1', '::', 'fd00::1', 'fe80::1', '::ffff:10.0.0.1', '64:ff9b::7f00:1', 'ff02::1', '::ffff:7f00:1']) {
+      expect(isPrivateIp(ip), ip).toBe(true)
+    }
+    for (const ip of ['8.8.8.8', '93.184.216.34', '172.32.0.1', '2606:4700::1111', '::ffff:8.8.8.8']) {
+      expect(isPrivateIp(ip), ip).toBe(false)
+    }
+  })
+
+  it('resolvesToPublicIps exige que TODAS las IPs sean públicas', async () => {
+    expect(await resolvesToPublicIps('https://a.example.com/x', async () => ['8.8.8.8'])).toBe(true)
+    expect(await resolvesToPublicIps('https://a.example.com/x', async () => ['8.8.8.8', '127.0.0.1'])).toBe(false)
+    expect(await resolvesToPublicIps('https://a.example.com/x', async () => [])).toBe(false)
   })
 
   it('procesa varios lotes hasta vaciar la cola', async () => {

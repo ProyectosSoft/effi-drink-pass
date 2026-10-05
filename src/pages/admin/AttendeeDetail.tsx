@@ -10,9 +10,21 @@ import { fmtDateTime, fmtEventDate, fullName } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
 import { PERMISSIONS as P, type Attendee, type EventDay } from '@/lib/types'
 
+// Proyecciones parciales de las vistas que consulta esta pantalla (solo las columnas usadas).
 type BenefitRow = { id: string; event_day_id: string; status: string; effective_status: string; consumed_at: string | null; expiration_at: string; cancel_reason: string | null }
 type ConsumptionRow = { id: string; consumed_at: string; operator_label: string | null; is_override: boolean; override_reason: string | null; event_date: string }
 type AuditRow = { id: number; occurred_at: string; action: string; actor_label: string | null; metadata: Record<string, unknown> }
+
+/**
+ * /admin/attendees/:id — ficha de un asistente. Requiere `attendeesRead`.
+ * Secciones condicionadas por permiso (las consultas también se desactivan con `enabled`
+ * para no pedir datos que RLS rechazaría):
+ * · `attendeesWrite`: editar datos y días elegibles (RPC `set_attendee_days`, que genera beneficios).
+ * · `benefitsRead`: beneficios por día con acciones (BenefitActions: excepción, regenerar QR, cancelar, restaurar).
+ * · `consumptionsRead`: historial de consumos, incluidas excepciones (override).
+ * · `auditRead`: últimos 50 eventos de auditoría relacionados con el asistente.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export default function AttendeeDetail() {
   const { id = '' } = useParams()
@@ -42,11 +54,15 @@ export default function AttendeeDetail() {
   })
   const audit = useQuery({
     queryKey: ['attendee-audit', id],
-    enabled: can(P.auditRead),
+    // El id va dentro de un filtro or() de PostgREST: solo se usa si es un UUID, para que
+    // un id manipulado en la URL (con comas o paréntesis) no pueda añadir condiciones al filtro.
+    enabled: can(P.auditRead) && UUID_RE.test(id),
+    // Eventos cuyo recurso es el asistente o que lo referencian en metadata (p. ej. canjes de sus beneficios).
     queryFn: async () => (await query<AuditRow[]>(supabase.from('audit_logs').select('id,occurred_at,action,actor_label,metadata')
       .or(`resource_id.eq.${id},metadata->>attendee_id.eq.${id}`).order('occurred_at', { ascending: false }).limit(50))).data,
   })
 
+  // Copia editable de los días elegibles; se resincroniza cada vez que llegan datos del servidor.
   const [selected, setSelected] = useState<string[]>([])
   useEffect(() => {
     if (elig.data) setSelected(elig.data.filter((e) => e.eligible).map((e) => e.event_day_id))
@@ -54,6 +70,10 @@ export default function AttendeeDetail() {
   const [savingDays, setSavingDays] = useState(false)
   const [daysError, setDaysError] = useState<unknown>(null)
 
+  /**
+   * Invalida todas las consultas de esta ficha (keys `[k, id]`) y el listado de asistentes,
+   * ya que editar datos, días o beneficios puede afectar a cualquiera de ellas.
+   */
   const refreshAll = () => {
     for (const k of ['attendee', 'attendee-days', 'attendee-benefits', 'attendee-consumptions', 'attendee-audit']) void qc.invalidateQueries({ queryKey: [k, id] })
     void qc.invalidateQueries({ queryKey: ['attendees'] })
@@ -98,6 +118,7 @@ export default function AttendeeDetail() {
               <Button size="sm" loading={savingDays} onClick={async () => {
                 setSavingDays(true); setDaysError(null)
                 try {
+                  // Reemplaza la elegibilidad completa; el servidor crea los beneficios de los días nuevos.
                   await rpc('set_attendee_days', { p_attendee_id: id, p_event_day_ids: selected })
                   toast('Elegibilidad actualizada; beneficios generados')
                   refreshAll()
@@ -115,6 +136,7 @@ export default function AttendeeDetail() {
               <table className="table-base min-w-[600px]">
                 <thead><tr><th>Día</th><th>Estado</th><th>Consumido</th><th>Expira</th><th>Nota</th><th /></tr></thead>
                 <tbody>
+                  {/* Orden cronológico según la fecha del día del evento (la vista no la incluye). */}
                   {benefits.data?.sort((x, y) => (dayById.get(x.event_day_id)?.date ?? '').localeCompare(dayById.get(y.event_day_id)?.date ?? '')).map((b) => (
                     <tr key={b.id}>
                       <td>{fmtEventDate(dayById.get(b.event_day_id)?.date)}</td>

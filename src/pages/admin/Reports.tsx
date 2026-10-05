@@ -6,6 +6,7 @@ import { downloadCsv } from '@/lib/csv'
 import { query, rpc, supabase } from '@/lib/supabase'
 import type { EventDay } from '@/lib/types'
 
+/** Tipos de reporte que acepta la RPC `get_report` (clave) y su etiqueta visible (valor). */
 const KINDS = {
   daily_consumptions: 'Consumos diarios',
   hourly_consumptions: 'Consumos por hora',
@@ -17,6 +18,12 @@ const KINDS = {
 } as const
 type Kind = keyof typeof KINDS
 
+/**
+ * /admin/reports — generador de reportes. Requiere `reportsRead`.
+ * Ejecuta la RPC `get_report` bajo demanda (no es un useQuery: solo al pulsar "Generar"),
+ * muestra una vista previa de hasta 500 filas y exporta el resultado completo a CSV
+ * (saneado contra CSV injection), registrando EXPORT_REPORT en auditoría.
+ */
 export default function Reports() {
   const [kind, setKind] = useState<Kind>('daily_consumptions')
   const [day, setDay] = useState('')
@@ -31,6 +38,7 @@ export default function Reports() {
     setBusy(true)
     setError(null)
     try {
+      // Solo se envían los filtros con valor.
       const filters = Object.fromEntries(Object.entries({ event_day_id: day, date_from: from, date_to: to }).filter(([, v]) => v))
       setRows(await rpc<Record<string, unknown>[]>('get_report', { p_kind: kind, p_filters: filters }))
     } catch (e) {
@@ -40,7 +48,9 @@ export default function Reports() {
     }
   }
 
+  // Las columnas se derivan de la primera fila: cada tipo de reporte tiene su propia forma.
   const cols = rows?.[0] ? Object.keys(rows[0]) : []
+  // El rango de fechas solo aplica a los reportes de consumos; en los demás se deshabilita.
   const usesDates = kind.endsWith('consumptions')
 
   return (
@@ -49,6 +59,7 @@ export default function Reports() {
       <Card>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Field label="Reporte" className="lg:col-span-2">
+            {/* Al cambiar de tipo se descartan los resultados para no exportar datos de otro reporte. */}
             <Select value={kind} onChange={(e) => { setKind(e.target.value as Kind); setRows(null) }}>
               {Object.entries(KINDS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </Select>

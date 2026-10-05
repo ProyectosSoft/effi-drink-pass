@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { PublicShell } from '@/components/layout'
 import { Button, EmptyState } from '@/components/ui'
 
+/** Página 404 pública para rutas inexistentes. */
 export function NotFound() {
   return (
     <PublicShell>

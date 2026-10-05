@@ -10,24 +10,39 @@ import {
 import { query, rpc, supabase } from '@/lib/supabase'
 import type { EventDay } from '@/lib/types'
 
+/** Resultado por fila que devuelve la RPC `import_attendees` (número de fila del archivo). */
 type ServerRow = { row: number; action: 'insert' | 'update' | 'skip' | 'error'; attendee_id: string | null; errors: string[]; warnings: string[] }
 type ServerResult = { dry_run: boolean; summary: Record<'total' | 'insert' | 'update' | 'skip' | 'error', number>; rows: ServerRow[] }
+/** Pasos del asistente: archivo → mapeo de columnas → previsualización (dry-run) → resultado. */
 type Step = 'upload' | 'map' | 'preview' | 'done'
 
+/** Filas por llamada a la RPC, para no exceder límites de payload/tiempo del servidor. */
 const BATCH = 500
 const actionTone = { insert: 'ok', update: 'info', skip: 'neutral', error: 'bad' } as const
 const actionLabel = { insert: 'Nuevo', update: 'Actualizar', skip: 'Omitir', error: 'Error' }
 
+/**
+ * /admin/import — importación masiva de asistentes desde CSV/XLSX. Requiere `attendeesImport`.
+ * Flujo con confirmación explícita (nunca importa en silencio):
+ * 1. Se lee el archivo en el navegador y se sugiere el mapeo de columnas.
+ * 2. Validación local (`validateRows`) + dry-run en el servidor (`import_attendees` con
+ *    p_dry_run=true) para previsualizar inserciones, actualizaciones, omisiones y errores.
+ * 3. Al confirmar se repite la llamada sin dry-run, en lotes, y se puede descargar el reporte.
+ * Opcionalmente asigna días elegibles (lo que genera beneficios). Queda en auditoría.
+ */
 export default function Import() {
   const qc = useQueryClient()
   const toast = useToast()
   const [step, setStep] = useState<Step>('upload')
   const [fileName, setFileName] = useState('')
   const [headers, setHeaders] = useState<string[]>([])
+  // Filas tal cual vienen del archivo (clave = encabezado original).
   const [raw, setRaw] = useState<Record<string, unknown>[]>([])
+  // Encabezado del archivo → campo de destino ('' = ignorar la columna).
   const [mapping, setMapping] = useState<Record<string, ImportField | ''>>({})
   const [mode, setMode] = useState<'upsert' | 'insert_only'>('upsert')
   const [dayIds, setDayIds] = useState<string[]>([])
+  // Resultado del dry-run; `final`/`finalRows` son los de la importación real.
   const [preview, setPreview] = useState<ServerRow[] | null>(null)
   const [final, setFinal] = useState<ServerResult['summary'] | null>(null)
   const [finalRows, setFinalRows] = useState<ServerRow[]>([])
@@ -38,10 +53,12 @@ export default function Import() {
 
   const days = useQuery({ queryKey: ['event-days'], queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data })
 
+  // Filas normalizadas según el mapeo y sus validaciones locales; se recalculan al cambiar el mapeo.
   const rows: ImportRow[] = useMemo(() => applyMapping(raw, mapping), [raw, mapping])
   const localChecks: RowCheck[] = useMemo(() => validateRows(rows), [rows])
   const mappedFields = Object.values(mapping).filter(Boolean)
 
+  /** Lee el archivo (en el navegador), sugiere el mapeo y pasa al paso de columnas. */
   const onFile = async (file: File) => {
     setError(null)
     setBusy(true)
@@ -65,9 +82,12 @@ export default function Import() {
   const runServer = async (dryRun: boolean): Promise<ServerResult['rows']> => {
     const all: ServerRow[] = []
     const localByRow = new Map(localChecks.map((c) => [c.row, c]))
+    // Las filas con errores locales no se envían; se agregan al final como 'error'.
     const valid = rows.filter((r) => (localByRow.get(r.row)?.errors.length ?? 0) === 0)
     const batches = chunk(valid, BATCH)
     setProgress(0)
+    // Lotes secuenciales para reportar progreso. En la importación real, si un lote falla
+    // los anteriores ya quedaron aplicados (no es una transacción única).
     for (let i = 0; i < batches.length; i++) {
       const res = await rpc<ServerResult>('import_attendees', {
         p_rows: batches[i], p_mode: mode, p_dry_run: dryRun, p_event_day_ids: dayIds.length ? dayIds : null, p_file_name: fileName,
@@ -81,6 +101,7 @@ export default function Import() {
     return all.sort((a, b) => a.row - b.row)
   }
 
+  /** Dry-run: el servidor valida y clasifica cada fila sin guardar nada. */
   const validate = async () => {
     setBusy(true)
     setError(null)
@@ -94,6 +115,7 @@ export default function Import() {
     }
   }
 
+  /** Importación real; al terminar invalida el listado de asistentes. */
   const commit = async () => {
     setBusy(true)
     setError(null)
@@ -113,6 +135,7 @@ export default function Import() {
     }
   }
 
+  // Conteo por acción del dry-run (para los badges y el botón de confirmar).
   const summary = useMemo(() => {
     const s = { insert: 0, update: 0, skip: 0, error: 0 }
     for (const r of preview ?? []) s[r.action]++
@@ -120,6 +143,7 @@ export default function Import() {
   }, [preview])
 
   const rowData = new Map(rows.map((r) => [r.row, r]))
+  /** Une el resultado del servidor con los datos de cada fila para el CSV descargable (saneado en downloadCsv). */
   const report = (list: ServerRow[]) => list.map((r) => ({
     fila: r.row, accion: actionLabel[r.action], ...rowData.get(r.row), attendee_id: r.attendee_id ?? '',
     errores: r.errors.join(' | '), advertencias: r.warnings.join(' | '),
@@ -131,6 +155,7 @@ export default function Import() {
     <div className="space-y-4">
       <PageHeader title="Importación de asistentes" subtitle="CSV o XLSX · validación, previsualización y confirmación explícita. Nunca se importa en silencio."
         actions={<Button variant="secondary" icon={<Download className="size-4" />} onClick={() => {
+          // Plantilla estática con BOM UTF-8 para que Excel muestre bien los acentos.
           const blob = new Blob(['﻿' + TEMPLATE_CSV], { type: 'text/csv;charset=utf-8' })
           const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'plantilla-asistentes.csv'; a.click()
         }}>Plantilla CSV</Button>} />
@@ -151,6 +176,7 @@ export default function Import() {
             <span className="text-sm text-muted">Máximo 5 MB / 20 000 filas. Columnas: nombres, apellidos, email, teléfono, effi_id, effi_username, tipo_acceso, empresa.</span>
             <input type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="sr-only"
               disabled={busy} onChange={(e) => e.target.files?.[0] && void onFile(e.target.files[0])} />
+            {/* El input real está oculto (sr-only); el botón abre su selector de archivos. */}
             <Button variant="secondary" loading={busy} icon={<Upload className="size-4" />} onClick={(e) => (e.currentTarget.previousElementSibling as HTMLInputElement)?.click()}>Elegir archivo</Button>
           </label>
         </Card>
@@ -164,6 +190,7 @@ export default function Import() {
                 <Field key={h} label={h}>
                   <Select value={mapping[h] ?? ''} onChange={(e) => setMapping((m) => ({ ...m, [h]: e.target.value as ImportField | '' }))}>
                     <option value="">— ignorar —</option>
+                    {/* Cada campo de destino solo puede mapearse desde una columna. */}
                     {IMPORT_FIELDS.map((f) => <option key={f} value={f} disabled={mappedFields.includes(f) && mapping[h] !== f}>{f}</option>)}
                   </Select>
                 </Field>
@@ -209,6 +236,7 @@ export default function Import() {
             <table className="table-base min-w-[800px]">
               <thead className="sticky top-0 bg-surface"><tr><th>Fila</th><th>Acción</th><th>Nombre</th><th>Email</th><th>ID Effi</th><th>Detalle</th></tr></thead>
               <tbody>
+                {/* Se limita a 1000 filas para no bloquear el navegador; el CSV contiene todas. */}
                 {visible.slice(0, 1000).map((r) => {
                   const d = rowData.get(r.row)
                   return (

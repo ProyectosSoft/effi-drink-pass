@@ -53,7 +53,7 @@ GitHub Pages solo sirve archivos estáticos: no se ejecuta backend allí.
    | `PAGES_BASE_PATH` | Opcional. `/` con dominio propio; por defecto `/<repo>/` |
 
 4. Push a `main` → workflow *Deploy frontend to GitHub Pages* (corre pruebas, build, verificación de secretos y publica).
-5. **Dominio propio** (recomendado, p. ej. `drinkpass.feriaeffix.com`): Settings → Pages → Custom domain + HTTPS obligatorio; poner `PAGES_BASE_PATH=/` y `VITE_PUBLIC_APP_URL=https://drinkpass.feriaeffix.com`; actualizar Site URL en Supabase Auth.
+5. **Dominio propio** (**obligatorio en producción**: en `<usuario>.github.io` la sesión queda expuesta a los demás sitios de Pages de la misma cuenta; p. ej. `drinkpass.feriaeffix.com`): Settings → Pages → Custom domain + HTTPS obligatorio; poner `PAGES_BASE_PATH=/` y `VITE_PUBLIC_APP_URL=https://drinkpass.feriaeffix.com`; actualizar Site URL en Supabase Auth.
 
 > Cambiar `VITE_PUBLIC_APP_URL` después de repartir QR no rompe nada: el QR se genera al mostrarse y el scanner acepta cualquier URL `…/qr/<token>`.
 

@@ -2,10 +2,19 @@
 // Uso: npm run postman   (editar este archivo, no el JSON generado)
 import { mkdirSync, writeFileSync } from 'node:fs'
 
+/** JSON con sangría de 2 espacios (diffs legibles del archivo generado). */
 const J = (o) => JSON.stringify(o, null, 2)
+/** Postman guarda los scripts como arreglo de líneas (`exec`). */
 const lines = (s) => s.trim().split('\n')
 
-/** Request helper. */
+/**
+ * Request helper: construye un item de Postman (colección v2.1).
+ * @param path ruta relativa a {{base_url}} (con query opcional) o URL absoluta ({{supabase_url}}/…)
+ * @param opts.body cuerpo JSON (objeto o string con variables {{…}} que no serían JSON válido)
+ * @param opts.form cuerpo x-www-form-urlencoded; opts.rawText cuerpo crudo sin Content-Type JSON
+ * @param opts.auth sobrescribe la auth de la colección (Bearer {{access_token}} por defecto)
+ * @param opts.pre / opts.tests scripts pre-request y de pruebas del request
+ */
 function req(name, method, path, { body, headers = [], auth, tests = '', pre = '', description = '', form, rawText } = {}) {
   const item = {
     name,
@@ -22,6 +31,7 @@ function req(name, method, path, { body, headers = [], auth, tests = '', pre = '
       description,
     },
   }
+  // URLs absolutas (p. ej. Supabase Auth) no cuelgan de base_url: se usan como string tal cual.
   if (path.startsWith('http') || path.startsWith('{{supabase_url}}')) {
     item.request.url = path
   }
@@ -36,14 +46,20 @@ function req(name, method, path, { body, headers = [], auth, tests = '', pre = '
   if (tests) item.event.push({ listen: 'test', script: { type: 'text/javascript', exec: lines(tests) } })
   return item
 }
+/** Carpeta de la colección. */
 const folder = (name, description, item) => ({ name, description, item })
+// Variantes de autenticación por request (la colección usa Bearer {{access_token}} por defecto).
 const noauth = { type: 'noauth' }
+/** JWT de Supabase Auth de un usuario staff (endpoints /v1/admin/*). */
 const staffAuth = { type: 'bearer', bearer: [{ key: 'token', value: '{{staff_jwt}}', type: 'string' }] }
 const apiKeyAuth = (v) => ({ type: 'apikey', apikey: [{ key: 'key', value: 'X-API-Key', type: 'string' }, { key: 'value', value: v, type: 'string' }, { key: 'in', value: 'header', type: 'string' }] })
+// Generadores de aserciones pm.test reutilizables (devuelven código JS como string).
 const status = (code) => `pm.test('HTTP ${code}', () => pm.response.to.have.status(${code}));`
 const errCode = (code) => `pm.test('error.code = ${code}', () => pm.expect(pm.response.json().error.code).to.eql('${code}'));`
 
 // ───────────────────────────── Scripts de colección ─────────────────────────
+// Ojo: el contenido de estos template strings es JavaScript que ejecuta Postman, no este script.
+/** Pre-request global: renueva el access token 60 s antes de expirar (excepto en las llamadas de login). */
 const collectionPre = `
 // Obtiene/renueva automáticamente el access token OAuth2 (client_credentials) si hay client_id/secret.
 const base = pm.collectionVariables.get('base_url') || pm.environment.get('base_url');
@@ -65,6 +81,7 @@ if (cid && secret && base && !url.includes('/oauth/token') && !url.includes('/au
   });
 }`
 
+/** Tests globales: request id, no-store, formato de error y que un 500 no filtre detalles de SQL/stack. */
 const collectionTests = `
 // Contratos comunes a toda la API.
 if (!pm.request.url.toString().includes('/auth/v1/')) {
@@ -84,6 +101,8 @@ if (!pm.request.url.toString().includes('/auth/v1/')) {
 }`
 
 // ───────────────────────────── Items ────────────────────────────────────────
+// Las carpetas se ejecutan en orden con el Runner y se encadenan vía variables de environment
+// (integration_id, attendee_id, benefit_id…), por lo que el orden de los requests importa.
 const items = [
   folder('00 · Health', 'Endpoint público de estado.', [
     req('Health check', 'GET', '/v1/health', { auth: noauth, tests: `${status(200)}\npm.test('status ok y base de datos ok', () => { const j = pm.response.json(); pm.expect(j.status).to.eql('ok'); pm.expect(j.checks.database).to.eql('ok'); });` }),
@@ -290,6 +309,7 @@ const items = [
 
 
 // Orden de ejecución: primero el staff crea integración y credenciales; luego se usan.
+// Se mueve el login de staff a la carpeta de administración y se intercambian las carpetas 01/02.
 {
   const auth = items[1]
   const admin = items[2]
@@ -301,6 +321,7 @@ const items = [
   items[2] = auth
 }
 
+/** Colección final: auth Bearer {{access_token}} heredada por todos los requests salvo que la sobrescriban. */
 const collection = {
   info: {
     name: 'Effi Drink Pass API v1',
@@ -319,6 +340,10 @@ const collection = {
   item: items,
 }
 
+/**
+ * Variables del environment: [clave, valor inicial, tipo]. Las de tipo 'secret' se enmascaran en Postman;
+ * el archivo generado nunca contiene secretos reales (se completan localmente).
+ */
 const envVars = [
   ['base_url', 'https://YOUR-PROJECT-REF.supabase.co/functions/v1/api', 'default'],
   ['supabase_url', 'https://YOUR-PROJECT-REF.supabase.co', 'default'],
@@ -354,6 +379,7 @@ const environment = {
   _postman_variable_scope: 'environment',
 }
 
+// Rutas relativas al directorio actual: ejecutar desde la raíz del repo (npm run postman).
 mkdirSync('docs/postman', { recursive: true })
 writeFileSync('docs/postman/Effi-Drink-Pass.postman_collection.json', J(collection) + '\n')
 writeFileSync('docs/postman/Effi-Drink-Pass.postman_environment.json', J(environment) + '\n')

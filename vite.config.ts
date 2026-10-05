@@ -22,6 +22,44 @@ function spaFallback(): Plugin {
   }
 }
 
+/**
+ * Content-Security-Policy por <meta> (GitHub Pages no permite cabeceras HTTP propias).
+ * Segunda línea de defensa ante XSS: solo se ejecuta JavaScript del propio sitio y solo se
+ * conecta a este origen y a Supabase, así un script inyectado no puede cargar código externo
+ * ni enviar la sesión a otro servidor. Solo en build: el servidor de desarrollo usa scripts
+ * inline y websockets para HMR.
+ */
+function contentSecurityPolicy(supabaseUrl: string): Plugin {
+  let supabase = ''
+  try {
+    const u = new URL(supabaseUrl)
+    supabase = `${u.origin} wss://${u.host}` // REST/RPC/Auth y Realtime
+  } catch {
+    /* sin URL configurada: solo 'self' */
+  }
+  const policy = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'", // estilos en línea de Swagger UI y Recharts
+    "img-src 'self' data: blob:",
+    "font-src 'self' data:",
+    `connect-src 'self' ${supabase}`.trim(),
+    "worker-src 'self' blob:", // service worker de la PWA y worker de qr-scanner
+    "media-src 'self' blob:", // cámara del escáner
+    "manifest-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+  ].join('; ')
+  return {
+    name: 'content-security-policy',
+    apply: 'build',
+    transformIndexHtml: () => [
+      { tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: policy }, injectTo: 'head-prepend' },
+    ],
+  }
+}
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const base = env.VITE_BASE_PATH || '/'
@@ -69,6 +107,7 @@ export default defineConfig(({ mode }) => {
         },
       }),
       spaFallback(),
+      contentSecurityPolicy(env.VITE_SUPABASE_URL ?? ''),
     ],
     build: {
       target: 'es2022',

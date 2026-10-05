@@ -9,6 +9,7 @@ type Row = {
   resource_id: string | null; success: boolean; ip: string | null; user_agent: string | null; metadata: Record<string, unknown>
 }
 const PAGE = 50
+/** Acciones registradas por el backend; debe mantenerse en sincronía con las que emite la BD/API. */
 const ACTIONS = [
   'LOGIN', 'LOGOUT', 'CREATE_ATTENDEE', 'UPDATE_ATTENDEE', 'IMPORT_ATTENDEES', 'SET_ELIGIBILITY', 'ASSIGN_DAY_BULK', 'VALIDATE_QR',
   'REDEEM_BENEFIT', 'FAILED_REDEEM', 'OVERRIDE_REDEEM', 'CANCEL_BENEFIT', 'RESTORE_BENEFIT', 'REGENERATE_TOKEN', 'GENERATE_BENEFITS',
@@ -17,6 +18,11 @@ const ACTIONS = [
   'UPDATE_ROLE', 'CREATE_USER', 'UPDATE_USER', 'CREATE_EVENT_DAY', 'UPDATE_EVENT_DAY', 'UPDATE_SETTINGS', 'EXPORT_REPORT', 'SCANNER_OPENED',
 ]
 
+/**
+ * /admin/audit — visor del registro de auditoría (`audit_logs`, solo lectura e inmutable).
+ * Requiere `auditRead`. Filtra por acción, actor, recurso, fecha y resultado; cada fila se
+ * puede expandir para ver la metadata y el user agent.
+ */
 export default function Audit() {
   const [action, setAction] = useState('')
   const [actor, setActor] = useState('')
@@ -24,6 +30,7 @@ export default function Audit() {
   const [from, setFrom] = useState('')
   const [onlyFailed, setOnlyFailed] = useState(false)
   const [page, setPage] = useState(1)
+  // Id de la fila expandida (solo una a la vez).
   const [open, setOpen] = useState<number | null>(null)
 
   const list = useQuery({
@@ -32,8 +39,10 @@ export default function Audit() {
     queryFn: () => {
       let q = supabase.from('audit_logs').select('*', { count: 'exact' })
       if (action) q = q.eq('action', action)
+      // Se eliminan los comodines de ILIKE del texto del usuario para que la búsqueda sea literal.
       if (actor.trim()) q = q.ilike('actor_label', `%${actor.trim().replace(/[%_\\]/g, '')}%`)
       if (resource.trim()) q = q.eq('resource_id', resource.trim())
+      // 05:00Z = medianoche en Bogotá (UTC-5): "Desde" se interpreta en hora de Colombia.
       if (from) q = q.gte('occurred_at', `${from}T05:00:00Z`)
       if (onlyFailed) q = q.eq('success', false)
       return query<Row[]>(q.order('occurred_at', { ascending: false }).range((page - 1) * PAGE, page * PAGE - 1))

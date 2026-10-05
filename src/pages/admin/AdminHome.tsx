@@ -9,14 +9,22 @@ import { fmtDateTime, fmtEventDate, num } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
 import { PERMISSIONS as P, type EventDay, type Statistics } from '@/lib/types'
 
+/** Filtros del dashboard; se envían a `get_statistics` (cadenas vacías = sin filtro). */
 type Filters = {
   event_day_id: string; date_from: string; date_to: string; operator_id: string; status: string
   effi_id: string; effi_username: string; empresa: string
 }
 const EMPTY: Filters = { event_day_id: '', date_from: '', date_to: '', operator_id: '', status: '', effi_id: '', effi_username: '', empresa: '' }
 
+/**
+ * /admin — dashboard de estadísticas. Requiere `statisticsRead` (sin ese permiso, AdminIndex
+ * en App.tsx redirige al scanner). Llama a la RPC `get_statistics` con los filtros aplicados,
+ * se refresca cada 30 s y muestra KPIs y gráficos por día, hora, operador y tipo de acceso.
+ */
 export default function AdminHome() {
   const { can } = useAuth()
+  // `draft` se edita en el formulario; `filters` solo cambia al pulsar "Aplicar filtros",
+  // así no se lanza una consulta por cada tecla.
   const [draft, setDraft] = useState<Filters>(EMPTY)
   const [filters, setFilters] = useState<Filters>(EMPTY)
 
@@ -25,12 +33,15 @@ export default function AdminHome() {
     queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data,
   })
   const stats = useQuery({
+    // Los filtros forman parte de la key: cada combinación se cachea por separado.
     queryKey: ['statistics', filters],
+    // Solo se envían los filtros con valor para que el servidor ignore los vacíos.
     queryFn: () => rpc<Statistics>('get_statistics', { p_filters: Object.fromEntries(Object.entries(filters).filter(([, v]) => v)) }),
     refetchInterval: 30_000,
   })
 
   const t = stats.data?.totals
+  /** Crea el onChange que actualiza un campo del borrador de filtros. */
   const set = (k: keyof Filters) => (e: { target: { value: string } }) => setDraft((d) => ({ ...d, [k]: e.target.value }))
 
   return (
@@ -66,6 +77,7 @@ export default function AdminHome() {
         <Field label="Operador">
           <Select value={draft.operator_id} onChange={set('operator_id')}>
             <option value="">Todos</option>
+            {/* Opciones tomadas de las propias estadísticas (operadores con consumos); se omiten los sin id. */}
             {stats.data?.by_operator.filter((o) => o.operator_id).map((o) => <option key={o.operator_id!} value={o.operator_id!}>{o.operator}</option>)}
           </Select>
         </Field>

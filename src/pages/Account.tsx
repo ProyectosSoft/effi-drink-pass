@@ -3,6 +3,11 @@ import { Button, Card, ErrorBox, Field, Input, useToast } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { supabase, toAppError } from '@/lib/supabase'
 
+/**
+ * /account — "Mi cuenta". Accesible para cualquier usuario autenticado (asistente o staff).
+ * Muestra email, roles y si la cuenta está vinculada a un asistente, y permite definir o
+ * cambiar la contraseña vía `supabase.auth.updateUser` (útil para quien entró por magic link).
+ */
 export default function Account() {
   const { session, access, signOut } = useAuth()
   const toast = useToast()
@@ -14,6 +19,7 @@ export default function Account() {
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
+    // Validación local previa para dar feedback inmediato; Supabase aplica además su propia política.
     if (pw.length < 10) return setError(new Error('La contraseña debe tener al menos 10 caracteres.'))
     if (pw !== pw2) return setError(new Error('Las contraseñas no coinciden.'))
     setBusy(true)

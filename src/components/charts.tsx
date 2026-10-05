@@ -6,9 +6,12 @@ import { Table2, BarChart3 } from 'lucide-react'
  * Paleta categórica validada (dataviz validator) sobre la superficie azul noche #061e33 (línea gráfica Grupo Effi):
  * CVD ΔE ≥ 9.4, visión normal ΔE ≥ 26.5, contraste ≥ 3:1. Orden fijo, nunca ciclado.
  */
-export const SERIES = ['#3987e5', '#d95926', '#199e70'] as const
+const SERIES = ['#3987e5', '#d95926', '#199e70'] as const
 
+// Recharts recibe colores literales (no clases CSS), por eso se repiten aquí los tokens del tema oscuro.
+/** Ejes discretos: sin líneas de eje ni marcas, solo etiquetas. */
 const axis = { stroke: '#8ca5ba', fontSize: 12, tickLine: false, axisLine: false }
+/** Tooltip con la superficie y bordes de las tarjetas de la app. */
 const tooltipStyle = {
   contentStyle: { background: '#0a2a47', border: '1px solid #17405f', borderRadius: 12, color: '#ffffff', fontSize: 13 },
   labelStyle: { color: '#cacaca', marginBottom: 4 },
@@ -16,9 +19,17 @@ const tooltipStyle = {
   cursor: { fill: 'rgba(255,255,255,0.05)' },
 }
 
+/** Serie de la gráfica: `key` es la propiedad numérica en cada fila de `data`. */
 type Series = { key: string; label: string }
 
-/** Tarjeta de gráfica con vista alternativa en tabla (accesibilidad). */
+/**
+ * Tarjeta de gráfica con vista alternativa en tabla (accesibilidad).
+ * Gráfica de barras (Recharts) con hasta 3 series (tamaño de la paleta SERIES).
+ * @param xKey propiedad de categoría (eje X, o eje Y si `horizontal`)
+ * @param horizontal barras horizontales; la altura crece con el número de categorías
+ * @param stacked apila las series en una sola barra por categoría
+ * @param formatX formatea las etiquetas de categoría en ejes, tooltip y tabla
+ */
 export function ChartCard<T extends Record<string, unknown>>({
   title, data, xKey, xLabel, series, height = 260, horizontal, stacked, formatX,
 }: {
@@ -27,6 +38,7 @@ export function ChartCard<T extends Record<string, unknown>>({
 }) {
   const [table, setTable] = useState(false)
   const fx = formatX ?? ((v: unknown) => String(v))
+  // Se considera vacía también si todas las filas valen 0: evita una gráfica con ejes y sin barras.
   const empty = data.length === 0 || data.every((d) => series.every((s) => !Number(d[s.key])))
 
   let body: ReactNode
@@ -62,6 +74,8 @@ export function ChartCard<T extends Record<string, unknown>>({
           )}
           <Tooltip {...tooltipStyle} labelFormatter={(l) => fx(l)} />
           {series.length > 1 && <Legend wrapperStyle={{ fontSize: 12, color: '#cacaca' }} iconType="circle" />}
+          {/* Apiladas: borde del color de fondo para separar segmentos y solo el último segmento lleva esquinas
+              redondeadas. Sin animación para que la gráfica no "salte" en cada refresco de datos. */}
           {series.map((s, i) => (
             <Bar key={s.key} dataKey={s.key} name={s.label} fill={SERIES[i]} stackId={stacked ? 'a' : undefined}
               stroke="#061e33" strokeWidth={stacked ? 2 : 0}

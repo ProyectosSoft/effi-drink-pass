@@ -2,11 +2,15 @@
  * Lectura y validación de archivos de asistentes (CSV / XLSX) en el navegador.
  * El servidor vuelve a validar todo (import_attendees); esta capa da la previsualización.
  */
+/** Campos del asistente que se pueden importar (el orden define la prioridad del mapeo automático). */
 export const IMPORT_FIELDS = ['nombres', 'apellidos', 'email', 'telefono', 'effi_id', 'effi_username', 'tipo_acceso', 'empresa'] as const
 export type ImportField = (typeof IMPORT_FIELDS)[number]
+/** Fila ya mapeada; `row` es el número de fila en la hoja original (para reportar errores). */
 export type ImportRow = { row: number } & Partial<Record<ImportField, string>>
+/** Resultado de validar una fila: los errores bloquean su importación, las advertencias no. */
 export type RowCheck = { row: number; errors: string[]; warnings: string[] }
 
+/** Encabezados habituales (español/inglés, sin tildes) reconocidos para cada campo. */
 const SYNONYMS: Record<ImportField, string[]> = {
   nombres: ['nombres', 'nombre', 'first name', 'firstname', 'name', 'primer nombre'],
   apellidos: ['apellidos', 'apellido', 'last name', 'lastname', 'surname'],
@@ -18,6 +22,10 @@ const SYNONYMS: Record<ImportField, string[]> = {
   empresa: ['empresa', 'compania', 'company', 'organizacion', 'organization'],
 }
 
+/**
+ * Normaliza un encabezado para compararlo: quita tildes (NFD + marcas diacríticas),
+ * pasa a minúsculas, elimina símbolos y unifica espacios/guiones. 'Correo Electrónico' → 'correo electronico'.
+ */
 export function normalizeHeader(h: string): string {
   return h.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9_ -]/g, '').replace(/[\s-]+/g, ' ').trim()
 }
@@ -28,6 +36,8 @@ export function suggestMapping(headers: string[]): Record<string, ImportField | 
   const out: Record<string, ImportField | ''> = {}
   for (const h of headers) {
     const n = normalizeHeader(h)
+    // Cada campo se asigna como máximo a un encabezado (el primero que coincida); se compara
+    // tratando espacio y '_' como equivalentes ('effi id' ≡ 'effi_id').
     const match = IMPORT_FIELDS.find((f) => !used.has(f) && SYNONYMS[f].some((s) => normalizeHeader(s) === n || normalizeHeader(s).replace(/ /g, '_') === n.replace(/ /g, '_')))
     out[h] = match ?? ''
     if (match) used.add(match)
@@ -48,10 +58,17 @@ export function applyMapping(raw: Record<string, unknown>[], mapping: Record<str
       }
       return row
     })
+    // Descarta filas sin ningún valor mapeado (filas en blanco o solo con columnas ignoradas).
     .filter((r) => IMPORT_FIELDS.some((f) => r[f]))
 }
 
+// Reflejan los CHECK de la tabla attendees (mismos límites de longitud y expresiones).
+/** Validación de email deliberadamente laxa: algo@dominio.tld, sin espacios (igual que el CHECK SQL). */
 const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/
+/**
+ * tipo_acceso: 1–40 caracteres alfanuméricos, espacio, '_' o '-', empezando por alfanumérico.
+ * Acepta minúsculas porque el servidor lo normaliza con upper() antes de guardarlo.
+ */
 const TIPO = /^[A-Za-z0-9][A-Za-z0-9 _-]{0,39}$/
 
 /** Validación local (formato + duplicados dentro del archivo completo). */
@@ -69,6 +86,7 @@ export function validateRows(rows: ImportRow[]): RowCheck[] {
     if ((r.telefono?.length ?? 0) > 40) errors.push('telefono excede 40 caracteres')
     if ((r.empresa?.length ?? 0) > 200) errors.push('empresa excede 200 caracteres')
     if (!r.email) warnings.push('sin email: no podrá iniciar sesión')
+    // Identificadores únicos: email y usuario se comparan sin distinguir mayúsculas (como los índices lower() del servidor).
     for (const [kind, value] of [['effi_id', r.effi_id], ['email', r.email?.toLowerCase()], ['effi_username', r.effi_username?.toLowerCase()]] as const) {
       if (!value) continue
       const key = `${kind}:${value}`
@@ -80,14 +98,16 @@ export function validateRows(rows: ImportRow[]): RowCheck[] {
   })
 }
 
+/** Divide un arreglo en lotes de `size` elementos (la importación se envía por lotes al servidor). */
 export function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = []
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
   return out
 }
 
-export const MAX_FILE_BYTES = 5 * 1024 * 1024
-export const MAX_ROWS = 20000
+// Límites para no bloquear ni agotar la memoria del navegador con archivos gigantes o maliciosos.
+const MAX_FILE_BYTES = 5 * 1024 * 1024
+const MAX_ROWS = 20000
 
 /** Lee CSV o XLSX a filas {encabezado: valor}. Carga perezosa de los parsers. */
 export async function readSpreadsheet(file: File): Promise<{ headers: string[]; rows: Record<string, unknown>[] }> {
@@ -96,11 +116,13 @@ export async function readSpreadsheet(file: File): Promise<{ headers: string[]; 
   if (name.endsWith('.csv') || name.endsWith('.txt') || file.type === 'text/csv') {
     const Papa = (await import('papaparse')).default
     const text = await file.text()
+    // Se quita el BOM UTF-8 que agrega Excel para que no contamine el primer encabezado.
     const res = Papa.parse<Record<string, unknown>>(text.replace(/^﻿/, ''), {
       header: true, skipEmptyLines: 'greedy', transformHeader: (h) => h.trim(),
       // Detecta ; (Excel en español) o ,
       delimitersToGuess: [',', ';', '\t', '|'],
     })
+    // Errores parciales (p. ej. filas con columnas de más) se toleran; solo se aborta si no hay datos.
     if (res.errors.length && res.data.length === 0) throw new Error(`CSV inválido: ${res.errors[0].message}`)
     const headers = (res.meta.fields ?? []).filter(Boolean)
     if (res.data.length > MAX_ROWS) throw new Error(`Máximo ${MAX_ROWS} filas por archivo.`)
@@ -119,4 +141,5 @@ export async function readSpreadsheet(file: File): Promise<{ headers: string[]; 
   throw new Error('Formato no soportado. Use .csv o .xlsx')
 }
 
+/** Plantilla descargable con los encabezados esperados y una fila de ejemplo. */
 export const TEMPLATE_CSV = 'nombres,apellidos,email,telefono,effi_id,effi_username,tipo_acceso,empresa\r\nJuan,Pérez,juan.perez@ejemplo.com,3001234567,123456,juan.perez,GENERAL,Mi Empresa SAS\r\n'

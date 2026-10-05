@@ -8,8 +8,13 @@ import { fmtEventDate, hhmm } from '@/lib/format'
 import { query, supabase } from '@/lib/supabase'
 import type { EventDay } from '@/lib/types'
 
+/**
+ * Página de inicio pública (/). Presenta el servicio, enlaza al login de asistentes y de staff
+ * y lista los días activos del evento (lectura pública de `event_days`).
+ */
 export function Landing() {
   const { session } = useAuth()
+  // Días activos del evento; si la consulta falla o está vacía, la sección simplemente no se muestra.
   const days = useQuery({
     queryKey: ['public-event-days'],
     queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').eq('active', true).order('date'))).data,
@@ -29,6 +34,7 @@ export function Landing() {
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link to={session ? '/my-benefits' : '/login'}><Button size="lg" icon={<QrCode className="size-5" />}>Ver mis beneficios</Button></Link>
+            {/* staff=1 hace que el login muestre directamente el acceso con contraseña. */}
             <Link to="/login?staff=1"><Button size="lg" variant="secondary" icon={<ScanLine className="size-5" />}>Soy staff</Button></Link>
           </div>
         </div>

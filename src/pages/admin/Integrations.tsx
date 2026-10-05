@@ -13,11 +13,22 @@ type Credential = {
   id: string; integration_id: string; client_id: string; secret_hint: string; scopes: string[]; active: boolean; expires_at: string | null
   last_used_at: string | null; last_used_ip: string | null; created_at: string; revoked_at: string | null; revoke_reason: string | null
 }
+/** Credencial recién emitida: es la única vez que el cliente recibe el secreto en claro. */
 type Issued = { id: string; client_id: string; client_secret: string; api_key: string; scopes: string[]; expires_at: string | null }
 
+/**
+ * /admin/integrations — sistemas externos que consumen la API. Requiere `integrationsManage`.
+ * · Alta/edición de integraciones con sus scopes permitidos (techo para sus credenciales).
+ * · Emisión (`create_api_credential`), rotación (`rotate_api_credential`) y revocación con
+ *   motivo obligatorio (`revoke_api_credential`) de credenciales, con confirmación.
+ * · El secreto solo se muestra una vez (SecretModal); en BD solo se guarda su hash.
+ * · Webhooks salientes por integración (WebhooksSection).
+ */
 export default function Integrations() {
   const qc = useQueryClient()
   const toast = useToast()
+  // Estados de los modales: integración en edición, integración para la que se emite
+  // credencial, credencial recién emitida (secreto visible) y credencial a revocar/rotar.
   const [editing, setEditing] = useState<Integration | 'new' | null>(null)
   const [issuing, setIssuing] = useState<Integration | null>(null)
   const [issued, setIssued] = useState<Issued | null>(null)
@@ -27,10 +38,12 @@ export default function Integrations() {
   const ints = useQuery({ queryKey: ['integrations'], queryFn: async () => (await query<Integration[]>(supabase.from('api_integrations').select('*').order('name'))).data })
   const creds = useQuery({
     queryKey: ['credentials'],
+    // Selección explícita de columnas: nunca se pide el hash del secreto al cliente.
     queryFn: async () => (await query<Credential[]>(supabase.from('api_credentials')
       .select('id,integration_id,client_id,secret_hint,scopes,active,expires_at,last_used_at,last_used_ip,created_at,revoked_at,revoke_reason')
       .order('created_at', { ascending: false }))).data,
   })
+  // Solo los permisos marcados como asignables a integraciones pueden ser scopes de API.
   const scopes = useQuery({
     queryKey: ['assignable-scopes'],
     queryFn: async () => (await query<{ name: string; description: string }[]>(supabase.from('permissions').select('name,description').eq('integration_assignable', true).order('name'))).data,
@@ -71,6 +84,7 @@ export default function Integrations() {
                 <thead><tr><th>Client ID</th><th>Secreto</th><th>Scopes</th><th>Último uso</th><th>Expira</th><th>Estado</th><th /></tr></thead>
                 <tbody>
                   {list.map((c) => {
+                    // Solo informativo (reloj local); la expiración real la aplica el servidor.
                     const expired = c.expires_at && new Date(c.expires_at) <= new Date()
                     return (
                       <tr key={c.id}>
@@ -93,6 +107,7 @@ export default function Integrations() {
                 </tbody>
               </table>
             </div>
+            {/* Los webhooks emiten datos de consumos, por eso exigen el scope consumptions:read. */}
             <WebhooksSection integrationId={i.id} canSubscribe={i.allowed_scopes.includes('consumptions:read')} />
           </Card>
         )
@@ -108,11 +123,16 @@ export default function Integrations() {
       <ConfirmDialog open={!!rotating} title="Rotar credencial" confirmLabel="Rotar"
         message="Se emitirá una credencial nueva con los mismos scopes y la actual quedará revocada de inmediato. Actualice el sistema externo con el nuevo secreto."
         onClose={() => setRotating(null)}
+        // La rotación devuelve una credencial nueva: se muestra su secreto con SecretModal.
         onConfirm={async () => { const c = await rpc<Issued>('rotate_api_credential', { p_credential_id: rotating!.id }); setIssued(c); refresh() }} />
     </div>
   )
 }
 
+/**
+ * Alta/edición de una integración: nombre, contacto, scopes permitidos y (solo al editar)
+ * estado activo. Reducir scopes recorta también las credenciales existentes (servidor).
+ */
 function IntegrationModal({ integration, scopes, onClose, onSaved }: {
   integration: Integration | null; scopes: { name: string; description: string }[]; onClose: () => void; onSaved: () => void
 }) {
@@ -159,6 +179,10 @@ function IntegrationModal({ integration, scopes, onClose, onSaved }: {
   )
 }
 
+/**
+ * Emite una credencial con un subconjunto de los scopes permitidos de la integración
+ * (principio de mínimo privilegio) y expiración opcional.
+ */
 function IssueModal({ integration, onClose, onIssued }: { integration: Integration; onClose: () => void; onIssued: (c: Issued) => void }) {
   const [selected, setSelected] = useState<string[]>([])
   const [expires, setExpires] = useState('')
@@ -170,6 +194,7 @@ function IssueModal({ integration, onClose, onIssued }: { integration: Integrati
       <Button loading={busy} disabled={selected.length === 0} onClick={async () => {
         setBusy(true); setError(null)
         try {
+          // La fecha elegida expira al final de ese día en hora de Colombia (23:59:59 -05:00).
           onIssued(await rpc<Issued>('create_api_credential', {
             p_integration_id: integration.id, p_scopes: selected, p_expires_at: expires ? new Date(`${expires}T23:59:59-05:00`).toISOString() : null }))
         } catch (e) { setError(e) } finally { setBusy(false) }
@@ -191,6 +216,11 @@ function IssueModal({ integration, onClose, onIssued }: { integration: Integrati
   )
 }
 
+/**
+ * Muestra client_id, client_secret y API key de una credencial recién emitida o rotada.
+ * No se puede cerrar (ni con Escape/fondo) hasta marcar que el secreto fue guardado,
+ * porque no se volverá a mostrar.
+ */
 function SecretModal({ cred, onClose }: { cred: Issued; onClose: () => void }) {
   const [ack, setAck] = useState(false)
   return (

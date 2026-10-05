@@ -17,8 +17,15 @@ const PAGE = 50
 
 /** Inicio del día en Bogotá (UTC-5, sin horario de verano) expresado en UTC. */
 const bogotaStart = (d: string) => `${d}T05:00:00Z`
+/** Inicio del día siguiente en Bogotá (límite exclusivo para el filtro "Hasta"). */
 const bogotaEnd = (d: string) => new Date(new Date(`${d}T05:00:00Z`).getTime() + 86_400_000).toISOString()
 
+/**
+ * /admin/consumptions — historial inmutable de consumos (vista `consumption_details`).
+ * Requiere `consumptionsRead`. Se refresca cada 20 s, distingue canjes por API y excepciones
+ * (override) y permite exportar a CSV (celdas saneadas en `downloadCsv`), registrando
+ * EXPORT_REPORT en auditoría.
+ */
 export default function Consumptions() {
   const [day, setDay] = useState('')
   const [from, setFrom] = useState('')
@@ -27,6 +34,7 @@ export default function Consumptions() {
   const [page, setPage] = useState(1)
 
   const days = useQuery({ queryKey: ['event-days'], queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data })
+  /** Consulta filtrada sin paginar; compartida por el listado y la exportación CSV. */
   const build = () => {
     let q = supabase.from('consumption_details').select('*', { count: 'exact' })
     if (day) q = q.eq('event_day_id', day)
@@ -42,8 +50,10 @@ export default function Consumptions() {
     queryFn: () => query<Row[]>(build().range((page - 1) * PAGE, page * PAGE - 1)),
   })
 
+  /** Exporta hasta 50 000 filas; el log de auditoría es best-effort y no bloquea la descarga. */
   const exportCsv = async () => {
     const { data } = await query<Row[]>(build().range(0, 49_999))
+    // Columnas en español; `canal` indica si el canje vino de una integración (API) o del staff.
     downloadCsv('consumos.csv', data.map((r) => ({
       consumido_en: fmtDateTime(r.consumed_at), dia: r.event_date, nombres: r.nombres, apellidos: r.apellidos, effi_id: r.effi_id,
       effi_username: r.effi_username, tipo_acceso: r.tipo_acceso, empresa: r.empresa, operador: r.operator_label,

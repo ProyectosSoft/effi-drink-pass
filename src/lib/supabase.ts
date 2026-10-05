@@ -1,14 +1,24 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { config, isConfigured } from './config'
 
+/**
+ * Cliente único de Supabase (anon key + JWT de la sesión del usuario).
+ * Todas las lecturas/escrituras pasan por RLS y RPC en Postgres, que son la barrera real de seguridad.
+ * detectSessionInUrl procesa los enlaces mágicos / redirects de Auth al cargar la página.
+ * Si la app no está configurada se exporta null: main.tsx no monta la app en ese caso, así que no se usa.
+ */
 export const supabase: SupabaseClient = isConfigured
   ? createClient(config.supabaseUrl, config.supabaseAnonKey, {
       auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true, flowType: 'implicit' },
     })
   : (null as unknown as SupabaseClient)
 
-/** Error de aplicación con mensaje amigable en español. */
-export class AppError extends Error {
+/**
+ * Error de aplicación con mensaje amigable en español.
+ * `code` conserva el código técnico (p. ej. FORBIDDEN, CONFLICT) para que la UI pueda reaccionar;
+ * `network` distingue fallos de conectividad (reintentables) de rechazos del servidor.
+ */
+class AppError extends Error {
   constructor(
     message: string,
     public code: string,
@@ -18,6 +28,10 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * Traducción de los códigos que las RPC lanzan con `raise exception '<CODIGO>'` a mensajes para el usuario.
+ * Códigos no listados se muestran tal cual.
+ */
 const FRIENDLY: Record<string, string> = {
   FORBIDDEN: 'No tienes permiso para realizar esta acción.',
   UNAUTHENTICATED: 'Tu sesión expiró. Inicia sesión nuevamente.',
@@ -43,23 +57,29 @@ const FRIENDLY: Record<string, string> = {
   TOKEN_OR_ID_REQUIRED: 'Falta el código QR.',
 }
 
+/** Forma mínima de los errores de PostgREST / supabase-js. */
 type PgLikeError = { code?: string; message?: string; details?: string | null }
 
+/** Normaliza cualquier error (red, PostgREST, Postgres, RPC) a un AppError con mensaje en español. */
 export function toAppError(err: unknown): AppError {
   if (err instanceof AppError) return err
   const e = (err ?? {}) as PgLikeError & { name?: string }
   const msg = e.message ?? String(err)
+  // fetch() lanza TypeError con mensajes distintos según el navegador (Chrome, Firefox, Safari, Node).
   if (/Failed to fetch|NetworkError|Load failed|fetch failed|network/i.test(msg) || e.name === 'TypeError') {
     return new AppError('Sin conexión con el servidor.', 'NETWORK', true)
   }
+  // 23505 = unique_violation. Se extrae la columna de details ("Key (lower(email))=...") para un mensaje concreto.
   if (e.code === '23505') {
     const field = e.details?.match(/Key \((?:lower\()?([a-z_]+)/)?.[1]
     const label = field === 'email' ? 'email' : field === 'effi_id' ? 'ID Effi' : field === 'effi_username' ? 'usuario Effi' : field ?? 'identificador'
     return new AppError(`Ya existe un registro con ese ${label}.`, 'CONFLICT')
   }
+  // 23514 = check_violation; 42501 = insufficient_privilege (RLS / GRANT).
   if (e.code === '23514') return new AppError('Algún dato no cumple el formato requerido.', 'CHECK')
   if (e.code === 'PGRST301' || e.code === '401') return new AppError(FRIENDLY.UNAUTHENTICATED, 'UNAUTHENTICATED')
   if (e.code === '42501' && /permission denied/i.test(msg)) return new AppError(FRIENDLY.FORBIDDEN, 'FORBIDDEN')
+  // Resto: el mensaje de la RPC es el propio código de negocio (ver FRIENDLY).
   return new AppError(FRIENDLY[msg] ?? msg, msg)
 }
 
@@ -75,7 +95,10 @@ export async function rpc<T>(fn: string, args: Record<string, unknown> = {}): Pr
   return result.data as T
 }
 
-/** Ejecuta una consulta de supabase-js y devuelve data/count o lanza AppError. */
+/**
+ * Ejecuta una consulta de supabase-js y devuelve data/count o lanza AppError.
+ * `count` solo viene informado si la consulta se construyó con `{ count: 'exact' }`; si no, es 0.
+ */
 export async function query<T>(
   builder: PromiseLike<{ data: T | null; error: PgLikeError | null; count?: number | null }>,
 ): Promise<{ data: T; count: number }> {

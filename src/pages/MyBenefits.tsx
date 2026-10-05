@@ -14,8 +14,14 @@ import { rpc } from '@/lib/supabase'
 import type { MyBenefits as MyBenefitsData } from '@/lib/types'
 
 type Row = MyBenefitsData['benefits'][number]
+/** Clave de localStorage donde se guarda el último token QR de cada beneficio. */
 const cacheKey = (id: string) => `edp:qr:${id}`
 
+/**
+ * Lee el token cacheado de un beneficio para poder mostrar el QR sin conexión.
+ * Se revalida con `extractToken` por si el valor guardado fue manipulado o es de un formato
+ * antiguo; si localStorage no está disponible (modo privado, bloqueado) devuelve null.
+ */
 function readCachedToken(id: string): string | null {
   try {
     return extractToken(localStorage.getItem(cacheKey(id)))
@@ -24,12 +30,21 @@ function readCachedToken(id: string): string | null {
   }
 }
 
+/**
+ * /my-benefits — pantalla del asistente autenticado (vinculado por email).
+ * Lista sus beneficios por día del evento (RPC `get_my_benefits`) y permite abrir el QR de
+ * cada día disponible o próximo. La fecha "hoy" y el estado de cada beneficio los decide
+ * el servidor (hora de Colombia), no el reloj del dispositivo.
+ */
 export default function MyBenefits() {
   const { signOut, isStaff } = useAuth()
+  // benefit_id del QR abierto; null = vista de lista.
   const [selected, setSelected] = useState<string | null>(null)
   const q = useQuery({
     queryKey: ['my-benefits'],
     queryFn: () => rpc<MyBenefitsData>('get_my_benefits'),
+    // Con un QR abierto se consulta más seguido para pasar a "BEBIDA ENTREGADA" poco
+    // después de que el operador lo canjee en la barra.
     refetchInterval: selected ? 5_000 : 30_000,
   })
 
@@ -47,6 +62,7 @@ export default function MyBenefits() {
       </header>
 
       {q.isLoading && <Spinner />}
+      {/* Solo se muestra el error si no hay datos previos; con datos en caché se sigue mostrando la última versión. */}
       {q.isError && !data && (
         <div className="space-y-3">
           <ErrorBox error={q.error} />
@@ -90,6 +106,7 @@ export default function MyBenefits() {
         </>
       )}
 
+      {/* `offline` = la última consulta falló: el QR (posiblemente cacheado) sigue sirviendo. */}
       {data?.attendee && current && (
         <QrView row={current} attendeeName={fullName(data.attendee)} effiId={data.attendee.effi_id} offline={q.isError} onBack={() => setSelected(null)} />
       )}
@@ -97,6 +114,10 @@ export default function MyBenefits() {
   )
 }
 
+/**
+ * Tarjeta de un día de beneficio con su estado. El QR solo se puede abrir si está disponible
+ * hoy o es de un día futuro (para tenerlo cacheado de antemano); consumidos/vencidos no.
+ */
 function DayCard({ row, isToday, onOpen }: { row: Row; isToday: boolean; onOpen: () => void }) {
   const canOpen = row.benefit_id && (row.display_status === 'AVAILABLE' || row.display_status === 'UPCOMING')
   return (
@@ -119,15 +140,23 @@ function DayCard({ row, isToday, onOpen }: { row: Row; isToday: boolean; onOpen:
   )
 }
 
+/**
+ * Vista a pantalla completa del QR de un beneficio.
+ * Muestra primero el token cacheado (si existe) y en paralelo pide uno fresco con
+ * `get_my_benefit_token`; si el servidor indica que ya no está disponible, se borra el caché.
+ * Mantiene la pantalla encendida (Wake Lock) y cambia a "BEBIDA ENTREGADA" al consumirse.
+ */
 function QrView({ row, attendeeName, effiId, offline, onBack }: {
   row: Row; attendeeName: string; effiId: string | null; offline: boolean; onBack: () => void
 }) {
   const qc = useQueryClient()
+  // Seguro: el padre solo abre esta vista para filas con benefit_id.
   const benefitId = row.benefit_id!
   const [token, setToken] = useState<string | null>(() => readCachedToken(benefitId))
   const [error, setError] = useState<unknown>(null)
   const consumed = row.display_status === 'CONSUMED'
 
+  // `alive` evita actualizar estado si el usuario sale de la vista antes de que responda la RPC.
   useEffect(() => {
     let alive = true
     rpc<{ available: boolean; token?: string }>('get_my_benefit_token', { p_benefit_id: benefitId })
@@ -145,7 +174,8 @@ function QrView({ row, attendeeName, effiId, offline, onBack }: {
     return () => { alive = false }
   }, [benefitId])
 
-  // Mantener la pantalla encendida mientras se muestra el QR.
+  // Mantener la pantalla encendida mientras se muestra el QR. API opcional (no todos los
+  // navegadores la soportan); los fallos se ignoran y el lock se libera al desmontar.
   useEffect(() => {
     let lock: { release: () => Promise<void> } | null = null
     const nav = navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<{ release: () => Promise<void> }> } }
@@ -153,6 +183,7 @@ function QrView({ row, attendeeName, effiId, offline, onBack }: {
     return () => { void lock?.release().catch(() => {}) }
   }, [])
 
+  // Al detectar el canje, refrescar la lista para que el resto de días muestre el estado actualizado.
   useEffect(() => {
     if (consumed) void qc.invalidateQueries({ queryKey: ['my-benefits'] })
   }, [consumed, qc])

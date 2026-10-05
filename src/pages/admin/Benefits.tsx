@@ -16,10 +16,20 @@ type Row = {
 }
 const PAGE = 50
 
+/** Escapa comodines de ILIKE y neutraliza caracteres que romperían el filtro or() de PostgREST. */
 function likeSafe(s: string) {
   return s.replace(/[%_\\]/g, (m) => `\\${m}`).replace(/[,()*]/g, ' ').trim()
 }
 
+/**
+ * /admin/benefits — listado global de beneficios (vista `benefit_details`). Requiere `benefitsRead`.
+ * · Exportación CSV de todo el filtro (celdas saneadas contra CSV injection en `downloadCsv`)
+ *   y registro del evento EXPORT_REPORT en auditoría.
+ * · `attendeesWrite`: asignar un día a todos los asistentes activos (RPC `assign_day_to_attendees`).
+ * · `benefitsWrite`: generar beneficios faltantes (`generate_benefits`) y persistir expirados
+ *   (`expire_benefits`), ambos tras confirmación.
+ * · Acciones por fila vía BenefitActions (excepción, regenerar QR, cancelar, restaurar).
+ */
 export default function Benefits() {
   const { can } = useAuth()
   const qc = useQueryClient()
@@ -29,9 +39,11 @@ export default function Benefits() {
   const [search, setSearch] = useState('')
   const [debounced, setDebounced] = useState('')
   const [page, setPage] = useState(1)
+  // Acción masiva pendiente de confirmar (null = ningún diálogo abierto).
   const [confirm, setConfirm] = useState<'generate' | 'expire' | null>(null)
   const [assignOpen, setAssignOpen] = useState(false)
 
+  // Debounce de 300 ms de la búsqueda; reinicia la paginación.
   useEffect(() => {
     const t = setTimeout(() => { setDebounced(search); setPage(1) }, 300)
     return () => clearTimeout(t)
@@ -39,6 +51,11 @@ export default function Benefits() {
 
   const days = useQuery({ queryKey: ['event-days'], queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data })
 
+  /**
+   * Construye la consulta con los filtros actuales, sin paginar. La comparten el listado
+   * y la exportación CSV para que el CSV contenga exactamente lo filtrado.
+   * Se filtra por `effective_status` (calculado con la hora del servidor), no por `status`.
+   */
   const build = () => {
     let q = supabase.from('benefit_details').select('*', { count: 'exact' })
     if (day) q = q.eq('event_day_id', day)
@@ -52,8 +69,10 @@ export default function Benefits() {
     placeholderData: keepPreviousData,
     queryFn: () => query<Row[]>(build().range((page - 1) * PAGE, page * PAGE - 1)),
   })
+  // Invalida todas las páginas/filtros del listado (prefijo 'benefits').
   const refresh = () => void qc.invalidateQueries({ queryKey: ['benefits'] })
 
+  /** Exporta hasta 50 000 filas del filtro actual y deja constancia en auditoría (best-effort). */
   const exportCsv = async () => {
     const { data } = await query<Row[]>(build().range(0, 49_999))
     downloadCsv('beneficios.csv', data.map((r) => ({
@@ -120,6 +139,10 @@ export default function Benefits() {
   )
 }
 
+/**
+ * Modal para habilitar un día a todos los asistentes activos, opcionalmente solo de un tipo
+ * de acceso. Llama a `assign_day_to_attendees` y devuelve cuántos asistentes se habilitaron.
+ */
 function AssignDayModal({ open, days, onClose, onDone }: { open: boolean; days: EventDay[]; onClose: () => void; onDone: (n: number) => void }) {
   const [day, setDay] = useState('')
   const [tipo, setTipo] = useState('')

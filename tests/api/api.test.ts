@@ -212,6 +212,36 @@ describe('API REST v1 (end-to-end contra PostgreSQL)', () => {
       const big = JSON.stringify({ nombres: 'x', metadata: { blob: 'a'.repeat(70_000) } })
       expect((await req('POST', '/v1/attendees', { headers: { ...bearer(), 'content-type': 'application/json' }, raw: big })).status).toBe(413)
     })
+
+    it('413 también en streaming sin Content-Length (chunked): se corta al pasar 64 KB', async () => {
+      let pulled = 0
+      const chunk = new TextEncoder().encode('a'.repeat(16 * 1024))
+      const body = new ReadableStream<Uint8Array>({
+        pull(c) {
+          pulled++
+          if (pulled > 1000) c.close() // un cliente que nunca deja de enviar
+          else c.enqueue(chunk)
+        },
+      })
+      const res = await handle(new Request(`${BASE}/v1/attendees`, {
+        method: 'POST', headers: { ...bearer(), 'content-type': 'application/json' }, body, duplex: 'half',
+      } as RequestInit))
+      expect(res.status).toBe(413)
+      expect(pulled).toBeLessThan(10) // no leyó el stream completo
+    })
+
+    it('metadata de consumo acotada: máx. 20 claves de hasta 64 caracteres', async () => {
+      const many = Object.fromEntries(Array.from({ length: 21 }, (_, i) => [`k${i}`, 1]))
+      const id = s.benefits['2026-10-16']
+      expect((await req('POST', `/v1/benefits/${id}/validate`, { headers: bearer(), body: { metadata: many } })).status).toBe(422)
+      expect((await req('POST', `/v1/benefits/${id}/validate`, { headers: bearer(), body: { metadata: { ['k'.repeat(65)]: 1 } } })).status).toBe(422)
+    })
+
+    it('búsqueda q: los comodines % y _ se tratan como texto literal', async () => {
+      const r = await req('GET', '/v1/attendees?q=%25%25', { headers: bearer() })
+      expect(r.status).toBe(200)
+      expect(r.json.data).toHaveLength(0) // antes "%%" coincidía con todos los asistentes
+    })
   })
 
   describe('validación y consumo', () => {

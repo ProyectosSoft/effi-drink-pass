@@ -1,7 +1,24 @@
 import { describe, it, expect } from 'vitest'
 import { signJwt, verifyJwt, TOKEN_AUDIENCE, TOKEN_ISSUER, type AccessTokenClaims } from '../../supabase/functions/_shared/jwt.ts'
 import { DbError, mapDbError, redeemStatus } from '../../supabase/functions/_shared/errors.ts'
-import { normalizePath } from '../../supabase/functions/_shared/app.ts'
+import { clientIp, normalizePath } from '../../supabase/functions/_shared/app.ts'
+import { escapeLike } from '../../supabase/functions/_shared/validation.ts'
+
+describe('IP del cliente', () => {
+  const r = (h: Record<string, string>) => new Request('https://x/v1/health', { headers: h })
+  it('prefiere cf-connecting-ip (no falsificable) sobre x-forwarded-for (controlado por el cliente)', () => {
+    expect(clientIp(r({ 'x-forwarded-for': '6.6.6.6, 1.1.1.1', 'cf-connecting-ip': '1.1.1.1' }))).toBe('1.1.1.1')
+    expect(clientIp(r({ 'x-forwarded-for': '6.6.6.6', 'x-real-ip': '2.2.2.2' }))).toBe('2.2.2.2')
+    expect(clientIp(r({ 'x-forwarded-for': '3.3.3.3, 4.4.4.4' }))).toBe('3.3.3.3')
+    expect(clientIp(r({}))).toBeNull()
+  })
+})
+
+describe('escapeLike', () => {
+  it('escapa %, _ y la barra invertida', () => {
+    expect(escapeLike('50%_a\\b')).toBe('50\\%\\_a\\\\b')
+  })
+})
 
 const SECRET = 'x'.repeat(40)
 const claims = (over: Partial<AccessTokenClaims> = {}): AccessTokenClaims => ({
@@ -22,6 +39,12 @@ describe('JWT HS256', () => {
     expect(await verifyJwt(await signJwt(claims({ aud: 'otra' }), SECRET), SECRET, 2000)).toEqual({ ok: false, reason: 'claims' })
     await expect(signJwt(claims(), 'corto')).rejects.toThrow(/32/)
     expect(await verifyJwt('a.b', SECRET)).toEqual({ ok: false, reason: 'malformed' })
+  })
+
+  it('firma con base64 inválido o payload no-objeto → malformed (nunca excepción)', async () => {
+    const [h, p] = (await signJwt(claims(), SECRET)).split('.')
+    expect(await verifyJwt(`${h}.${p}.!!!`, SECRET, 2000)).toEqual({ ok: false, reason: 'malformed' })
+    expect(await verifyJwt(`${h}.bnVsbA.${'A'.repeat(43)}`, SECRET, 2000)).toEqual({ ok: false, reason: 'malformed' }) // payload "null"
   })
 })
 
