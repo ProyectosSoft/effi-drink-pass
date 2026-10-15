@@ -65,6 +65,7 @@ export function Login() {
   /** Solicita el OTP. También se usa para "Reenviar código" (sin evento de formulario). */
   const sendCode = (e?: FormEvent) => {
     e?.preventDefault()
+    if (busy || cooldown > 0) return
     void run(async () => {
       // El magic link del correo vuelve a /login conservando `next`; el email se normaliza
       // en minúsculas para que coincida con el registro del asistente.
@@ -72,7 +73,12 @@ export function Login() {
         email: email.trim().toLowerCase(),
         options: { shouldCreateUser: true, emailRedirectTo: `${config.publicAppUrl}/login?next=${encodeURIComponent(next)}` },
       })
-      if (error) throw error
+      if (error) {
+        const appError = toAppError(error)
+        // Pausa local para evitar reintentos continuos; la cuota real la controla Auth.
+        if (['over_email_send_rate_limit', 'over_request_rate_limit'].includes(appError.code)) setCooldown(60)
+        throw appError
+      }
       setSent(true)
       setCooldown(60)
     })
@@ -118,7 +124,9 @@ export function Login() {
                 <Field label="Email registrado">
                   <Input type="email" autoComplete="email" inputMode="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="tu@email.com" />
                 </Field>
-                <Button type="submit" className="w-full" size="lg" loading={busy}>Enviarme un código</Button>
+                <Button type="submit" className="w-full" size="lg" loading={busy} disabled={cooldown > 0}>
+                  {cooldown > 0 ? `Volver a intentar en ${cooldown}s` : 'Enviarme un código'}
+                </Button>
                 <p className="text-xs text-faint">Te enviaremos un código de 6 dígitos (y un enlace) al email con el que te registraron en la feria.</p>
               </form>
             ) : (

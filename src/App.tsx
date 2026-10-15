@@ -11,6 +11,7 @@ import { NotFound } from './pages/NotFound'
 // Las páginas públicas de entrada se importan de forma estática (primer render rápido);
 // el resto se carga bajo demanda en chunks separados (code splitting).
 const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Claim = lazy(() => import('./pages/Claim'))
 const MyBenefits = lazy(() => import('./pages/MyBenefits'))
 const QrLanding = lazy(() => import('./pages/QrLanding'))
 const Account = lazy(() => import('./pages/Account'))
@@ -47,6 +48,7 @@ export function App() {
       <Routes>
         <Route path="/" element={<Landing />} />
         <Route path="/login" element={<Login />} />
+        <Route path="/claim" element={<Claim />} />
         {/* URL que codifica el QR; /r/ es un alias corto con el mismo comportamiento. */}
         <Route path="/qr/:token" element={<QrLanding />} />
         <Route path="/r/:token" element={<QrLanding />} />

@@ -7,6 +7,7 @@
 | [API.md](API.md) | Endpoints, ejemplos, códigos de resultado y errores, sincronización con Effi |
 | [openapi.yaml](openapi.yaml) | Especificación **OpenAPI 3.1** (equivale a `OPENAPI.yaml`; en Windows ambos nombres son el mismo archivo). Visor interactivo en `/api-docs` |
 | [AUTHENTICATION.md](AUTHENTICATION.md) | Cuentas de asistentes y staff, configuración de Supabase Auth |
+| [PUBLIC_CLAIM.md](PUBLIC_CLAIM.md) | QR general de entrada, consulta sin OTP por correo o ID Effi y despliegue |
 | [ROLES.md](ROLES.md) | Permisos, roles, salvaguardas, RLS |
 | [INTEGRATIONS.md](INTEGRATIONS.md) | Integraciones externas, credenciales, OAuth2/API key, webhooks |
 | [QR.md](QR.md) | Diseño del token QR y del portal |

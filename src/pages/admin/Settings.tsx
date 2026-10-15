@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
+import { EntryQr } from '@/components/EntryQr'
 import { Badge, Button, Card, Checkbox, ErrorBox, Field, Input, Modal, PageHeader, Select, useToast } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { fmtEventDate, hhmm } from '@/lib/format'
@@ -55,6 +56,8 @@ export default function Settings() {
   return (
     <div className="space-y-4">
       <PageHeader title="Configuración" />
+
+      <EntryQr />
 
       <Card title="Reloj oficial del servidor">
         <p className="text-sm">
