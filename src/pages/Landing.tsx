@@ -30,10 +30,11 @@ export function Landing() {
             Tu bebida del día, <span className="brand-text">en un QR</span>.
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-base text-muted text-balance sm:text-lg">
-            Ingresa con tu email, abre el beneficio de hoy y muéstralo en la barra. Un QR por día, válido solo en su fecha.
+            Consulta con tu correo o ID Effi, abre el QR de hoy y muéstralo en la barra. Un beneficio por día, válido solo en su fecha.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Link to={session ? '/my-benefits' : '/login'}><Button size="lg" icon={<QrCode className="size-5" />}>Ver mis beneficios</Button></Link>
+            <Link to="/claim"><Button size="lg" icon={<QrCode className="size-5" />}>Reclamar mi bebida</Button></Link>
+            {session && <Link to="/my-benefits"><Button size="lg" variant="secondary">Mis beneficios</Button></Link>}
             {/* staff=1 hace que el login muestre directamente el acceso con contraseña. */}
             <Link to="/login?staff=1"><Button size="lg" variant="secondary" icon={<ScanLine className="size-5" />}>Soy staff</Button></Link>
           </div>

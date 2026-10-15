@@ -2,6 +2,8 @@
 
 Effi Drink Pass tiene **sus propias cuentas** en Supabase Auth. No se usa el login de Effi en ningún caso.
 
+El acceso público para reclamar la bebida desde el QR general usa `/claim`: consulta por correo o ID Effi sin OTP ni sesión. Está documentado en [PUBLIC_CLAIM.md](PUBLIC_CLAIM.md). Las cuentas y el portal autenticado descritos aquí siguen disponibles.
+
 ## Asistentes
 
 - Ingresan en `/login` → **“Código por email”**: reciben un código de 6 dígitos (y un enlace) en el email con el que fueron registrados/importados.
@@ -33,6 +35,18 @@ Desactivar un perfil (`activo = false`) retira todos sus permisos de inmediato, 
 | OTP expiry | 900 s (15 min) recomendado |
 
 > Sin `{{ .Token }}` en las plantillas, los usuarios solo reciben el enlace (también funciona si lo abren en el mismo dispositivo).
+
+## Error `email rate limit exceeded`
+
+Supabase Auth rechazó el envío por su cuota de correo; cambiar el frontend no libera esa cuota. Revisar los registros de Auth y la configuración del proyecto:
+
+1. Configurar un proveedor en **Authentication → SMTP Settings** con remitente y dominio verificados. El servicio integrado está limitado actualmente a 2 correos por hora por proyecto y solo envía a miembros del equipo.
+2. Revisar **Authentication → Rate Limits** y ajustar la cuota de correo al volumen esperado y a los límites del proveedor SMTP, incluso después de configurar SMTP propio.
+3. Esperar a que se recupere la cuota y probar un único envío. Verificar tanto el primer ingreso como el acceso de una cuenta existente.
+
+La pantalla traduce el error y pausa los reintentos durante 60 segundos; esa pausa no garantiza que la cuota del servidor se haya recuperado. Quienes ya tienen contraseña pueden usarla durante la interrupción.
+
+Referencias: [límites de Auth](https://supabase.com/docs/guides/auth/rate-limits) y [SMTP personalizado](https://supabase.com/docs/guides/auth/auth-smtp).
 
 ## Sesiones
 

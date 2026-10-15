@@ -65,6 +65,12 @@ export function toAppError(err: unknown): AppError {
   if (err instanceof AppError) return err
   const e = (err ?? {}) as PgLikeError & { name?: string }
   const msg = e.message ?? String(err)
+  if (e.code === 'over_email_send_rate_limit' || /email rate limit exceeded/i.test(msg)) {
+    return new AppError('El servicio de correo alcanzó su límite de envíos. Intenta más tarde o contacta al organizador. Si ya tienes contraseña, puedes ingresar con ella.', 'over_email_send_rate_limit')
+  }
+  if (e.code === 'over_request_rate_limit') {
+    return new AppError('Hay demasiados intentos. Espera un momento antes de volver a intentarlo.', 'over_request_rate_limit')
+  }
   // fetch() lanza TypeError con mensajes distintos según el navegador (Chrome, Firefox, Safari, Node).
   if (/Failed to fetch|NetworkError|Load failed|fetch failed|network/i.test(msg) || e.name === 'TypeError') {
     return new AppError('Sin conexión con el servidor.', 'NETWORK', true)
