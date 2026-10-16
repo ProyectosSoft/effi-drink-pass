@@ -57,6 +57,6 @@ El permiso `consumptions:manual` se asigna inicialmente solo a `super_admin`; un
 
 ## Consulta unificada y orden de columnas
 
-Aplicar `20261015000015_consumption_history.sql` antes de publicar el frontend correspondiente. La vista `consumption_history` reúne los dos historiales sin copiar ni modificar consumos y conserva las políticas RLS de las tablas originales. En Consumos se filtra por tipo, día efectivo, intervalo de días e ID Effi; la fecha del registro se muestra por separado para las cargas retroactivas. Consultar entregas de empresas requiere `consumptions:read` y `attendees:read`.
+No requiere una migración adicional: Consumos consulta directamente las entregas de empresas y los consumos individuales, con sus políticas RLS originales. El selector Tipo muestra Empresas por defecto y permite cambiar a Individuales. Se filtra por día efectivo, intervalo de días e ID Effi; la fecha del registro se muestra por separado para las cargas retroactivas. Consultar entregas de empresas requiere `consumptions:read` y `attendees:read`.
 
 En Cupos y entregas por día, pulsar un encabezado alterna el orden ascendente y descendente sobre todos los resultados, antes de paginar. El filtro de día se conserva y el cambio de orden vuelve a la primera página.

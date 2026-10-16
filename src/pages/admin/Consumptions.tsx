@@ -6,13 +6,9 @@ import { Badge, Button, ErrorBox, Field, Input, PageHeader, Pagination, Select, 
 import { downloadCsv } from '@/lib/csv'
 import { fmtDateTime } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
+import { fetchConsumptionHistory, type HistorySource } from '@/lib/consumptionHistory'
 import type { EventDay } from '@/lib/types'
 
-type Row = {
-  id: string; source: 'company' | 'individual'; attendee_id: string | null; event_day_id: string
-  recorded_at: string; event_date: string; effi_id: string | null; display_name: string
-  quantity: number; operator_label: string | null; channel: string; reason: string | null
-}
 const PAGE = 50
 
 /** Historial de empresas e individuales; fechas filtradas por día efectivo del evento. */
@@ -21,31 +17,22 @@ export default function Consumptions() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [effi, setEffi] = useState('')
-  const [source, setSource] = useState('')
+  const [source, setSource] = useState<HistorySource>('company')
   const [page, setPage] = useState(1)
 
   const days = useQuery({ queryKey: ['event-days'], queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data })
-  /** Consulta filtrada sin paginar; compartida por el listado y la exportación CSV. */
-  const build = () => {
-    let q = supabase.from('consumption_history').select('*', { count: 'exact' })
-    if (day) q = q.eq('event_day_id', day)
-    if (from) q = q.gte('event_date', from)
-    if (to) q = q.lte('event_date', to)
-    if (source) q = q.eq('source', source)
-    if (effi.trim()) q = q.eq('effi_id', effi.trim())
-    return q.order('event_date', { ascending: false }).order('recorded_at', { ascending: false }).order('id')
-  }
+  const filters = { source, day, from, to, effi }
   const list = useQuery({
     queryKey: ['consumptions', day, from, to, effi, source, page],
     placeholderData: keepPreviousData,
     refetchInterval: 20_000,
-    queryFn: () => query<Row[]>(build().range((page - 1) * PAGE, page * PAGE - 1)),
+    queryFn: () => fetchConsumptionHistory(supabase, filters, (page - 1) * PAGE, page * PAGE - 1),
   })
 
   /** Exporta hasta 50 000 filas; el log de auditoría es best-effort y no bloquea la descarga. */
   const exportCsv = async () => {
-    const { data } = await query<Row[]>(build().range(0, 49_999))
-    // Columnas en español; `canal` indica si el canje vino de una integración (API) o del staff.
+    const { data } = await fetchConsumptionHistory(supabase, filters, 0, 49_999)
+    // Mismos filtros que la tabla; la fecha efectiva y la de registro se conservan por separado.
     downloadCsv('consumos.csv', data.map((r) => ({
       registrado_en: fmtDateTime(r.recorded_at), dia_consumo: r.event_date, tipo: r.source === 'company' ? 'Empresa' : 'Individual',
       empresa_o_asistente: r.display_name, effi_id: r.effi_id, cantidad: r.quantity,
@@ -62,14 +49,14 @@ export default function Consumptions() {
           <option value="">Todos</option>
           {days.data?.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.date}</option>)}
         </Select></Field>
-        <Field label="Tipo"><Select value={source} onChange={(e) => { setSource(e.target.value); setPage(1) }}>
-          <option value="">Todos</option><option value="company">Empresas</option><option value="individual">Individuales</option>
+        <Field label="Tipo"><Select value={source} onChange={(e) => { setSource(e.target.value as HistorySource); setPage(1) }}>
+          <option value="company">Empresas</option><option value="individual">Individuales</option>
         </Select></Field>
         <Field label="Desde"><Input type="date" value={from} onChange={(e) => { setFrom(e.target.value); setPage(1) }} /></Field>
         <Field label="Hasta"><Input type="date" value={to} onChange={(e) => { setTo(e.target.value); setPage(1) }} /></Field>
         <Field label="ID Effi"><Input value={effi} onChange={(e) => { setEffi(e.target.value); setPage(1) }} /></Field>
       </div>
-      <Button variant="ghost" className="mb-3" onClick={() => { setDay(''); setFrom(''); setTo(''); setEffi(''); setSource(''); setPage(1) }}>Limpiar filtros</Button>
+      <Button variant="ghost" className="mb-3" onClick={() => { setDay(''); setFrom(''); setTo(''); setEffi(''); setSource('company'); setPage(1) }}>Limpiar filtros</Button>
       <ErrorBox error={list.error} />
       <div className="card overflow-x-auto p-2">
         {list.isLoading ? <Spinner /> : (
