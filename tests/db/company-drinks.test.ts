@@ -29,6 +29,24 @@ describe('cupos de bebidas por empresa y día', () => {
     })
   }
 
+  it('consulta por nombre fiscal e identificación normalizada sin elegir entre duplicados', async () => {
+    await rpc(s.db, s.admin.authId, 'upsert_drink_company', {
+      p_data: { effi_id: 'EMP-001', name: 'Empresa prueba', identification: '901.173.460-5', user_count: 5 },
+    })
+    expect((await lookup('name', ' EMPRESA   PRUEBA ')).available).toBe(true)
+    expect((await lookup('identification', '9011734605')).available).toBe(true)
+    expect((await lookup('identification', '901173460')).available).toBe(false)
+    await save(5)
+    expect((await lookup('identification', '901173460-5')).available).toBe(true)
+    await rpc(s.db, s.admin.authId, 'upsert_drink_company', {
+      p_data: { effi_id: 'EMP-002', name: 'Empresa prueba', identification: '9011734605', user_count: 2 },
+      p_event_day_ids: Object.values(s.days),
+    })
+    expect((await lookup('name', 'Empresa prueba')).code).toBe('AMBIGUOUS_COMPANY')
+    expect((await lookup('identification', '9011734605')).code).toBe('AMBIGUOUS_COMPANY')
+    expect((await lookup()).available).toBe(true)
+  })
+
   it('registra ayer sin modificar el saldo de hoy y audita fecha efectiva y operador', async () => {
     await manual()
     expect((await lookup()).company.delivered).toBe(0)

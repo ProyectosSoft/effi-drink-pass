@@ -35,7 +35,7 @@ export function CompanyImport({ days }: { days: EventDay[] }) {
   return (
     <Card title="Importar empresas y cupos diarios">
       <div className="space-y-4">
-        <p className="text-sm text-muted">CSV o XLSX. Columnas: ID, Nombre fiscal, CANTIDAD USUARIO y correo opcional. Guarda el archivo XLS como XLSX o CSV antes de cargarlo. Cantidad vacía = 1 bebida diaria. Las empresas existentes se actualizan por ID Effi.</p>
+        <p className="text-sm text-muted">CSV o XLSX. Columnas: ID, Nombre fiscal, Identificación, CANTIDAD USUARIO y correo opcional. Guarda el archivo XLS como XLSX o CSV antes de cargarlo. Cantidad vacía = 1 bebida diaria. Las empresas existentes se actualizan por ID Effi.</p>
         <Button variant="secondary" onClick={() => {
           const url = URL.createObjectURL(new Blob(['\uFEFF' + COMPANY_TEMPLATE], { type: 'text/csv;charset=utf-8' }))
           const a = document.createElement('a'); a.href = url; a.download = 'plantilla-empresas.csv'; a.click()

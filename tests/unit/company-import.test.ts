@@ -4,10 +4,11 @@ import { parseCompanies } from '../../src/lib/companyImport'
 describe('archivo de empresas y cantidad de usuarios', () => {
   it('mapea el reporte fiscal y admite texto como 4 usuarios; vacíos son uno', () => {
     const result = parseCompanies([
-      { ID: '001', 'Nombre fiscal': 'Empresa A', 'CANTIDAD USUARIO ': '4 usuarios' },
+      { ID: '001', 'Nombre fiscal': 'Empresa A', 'Identificación': '901173460-5', 'CANTIDAD USUARIO ': '4 usuarios' },
       { ID: '002', 'Nombre fiscal': 'Empresa B', 'CANTIDAD USUARIO ': '' },
     ])
     expect(result.errors).toEqual([])
+    expect(result.companies[0].identification).toBe('901173460-5')
     expect(result.defaults).toBe(1)
     expect(result.companies.map((c) => [c.effi_id, c.user_count])).toEqual([['001', 4], ['002', 1]])
   })

@@ -30,7 +30,7 @@ export function Landing() {
             Las bebidas de tu empresa, <span className="brand-text">en un QR</span>.
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-base text-muted text-balance sm:text-lg">
-            Consulta con el correo o ID Effi de tu empresa. El cupo diario corresponde a su cantidad de usuarios y cada entrega descuenta el saldo.
+            Consulta con el nombre fiscal, identificación o ID Effi de tu empresa. El cupo diario corresponde a su cantidad de usuarios y cada entrega descuenta el saldo.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link to="/claim"><Button size="lg" icon={<QrCode className="size-5" />}>Consultar cupo de mi empresa</Button></Link>

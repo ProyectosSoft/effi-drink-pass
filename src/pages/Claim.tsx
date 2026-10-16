@@ -26,13 +26,14 @@ const messages: Record<string, string> = {
   NOT_STARTED: 'Aún no ha comenzado el horario para reclamar tu bebida.',
   EXPIRED: 'El horario para reclamar la bebida de hoy ya terminó.',
   RATE_LIMITED: 'Hay demasiadas consultas. Espera un momento y vuelve a intentarlo.',
+  AMBIGUOUS_COMPANY: 'Hay varias empresas con ese dato. Consulta por identificación o ID Effi.',
   COMPANY_INACTIVE: 'La empresa está inactiva. Acércate al punto de información.',
   QUOTA_EXHAUSTED: 'La empresa ya reclamó todas sus bebidas de hoy.',
 }
 
 /** Entrada del QR general: consulta pública, independiente del login del staff. */
 export default function Claim() {
-  const [kind, setKind] = useState<'email' | 'effi_id'>('email')
+  const [kind, setKind] = useState<'name' | 'identification' | 'effi_id'>('name')
   const [identifier, setIdentifier] = useState('')
   const [result, setResult] = useState<Lookup | null>(null)
   const [busy, setBusy] = useState(false)
@@ -59,7 +60,7 @@ export default function Claim() {
     <PublicShell>
       <section className="card glow mx-auto mt-6 max-w-md p-6 sm:mt-14 sm:p-8">
         <h1 className="text-2xl font-bold">Bebidas de tu empresa</h1>
-        <p className="mt-2 text-sm text-muted">Consulta el cupo de hoy con el correo o ID Effi registrado de tu empresa.</p>
+        <p className="mt-2 text-sm text-muted">Consulta el cupo de hoy con el nombre fiscal, identificación o ID Effi de tu empresa.</p>
 
         {result?.available && result.token && result.event_day ? (
           <div className="mt-6 flex flex-col items-center gap-4 text-center" aria-live="polite">
@@ -83,14 +84,14 @@ export default function Claim() {
           <form onSubmit={lookup} className="mt-6 space-y-4">
             <fieldset disabled={busy} className="space-y-4">
               <legend className="mb-2 text-sm font-semibold">Consultar por</legend>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <label className="flex items-center gap-2"><input type="radio" name="identifier-kind" checked={kind === 'email'} onChange={() => { setKind('email'); reset() }} />Correo</label>
-                <label className="flex items-center gap-2"><input type="radio" name="identifier-kind" checked={kind === 'effi_id'} onChange={() => { setKind('effi_id'); reset() }} />ID Effi</label>
+              <div className="flex flex-wrap gap-3 text-sm">
+                {([['name', 'Nombre fiscal'], ['identification', 'Identificación'], ['effi_id', 'ID Effi']] as const).map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-2"><input type="radio" name="identifier-kind" checked={kind === value} onChange={() => { setKind(value); reset() }} />{label}</label>
+                ))}
               </div>
-              <Field label={kind === 'email' ? 'Correo registrado' : 'ID Effi registrado'}>
-                <Input type={kind === 'email' ? 'email' : 'text'} autoComplete={kind === 'email' ? 'email' : 'off'}
-                  maxLength={kind === 'email' ? 254 : 64} required value={identifier}
-                  onChange={(e) => { setIdentifier(e.target.value); setResult(null); setError(null) }} placeholder={kind === 'email' ? 'tu@email.com' : 'Tu ID Effi'} />
+              <Field label={kind === 'name' ? 'Nombre fiscal' : kind === 'identification' ? 'Identificación' : 'ID Effi'}>
+                <Input type="text" autoComplete="off" maxLength={kind === 'name' ? 200 : 64} required value={identifier}
+                  onChange={(e) => { setIdentifier(e.target.value); setResult(null); setError(null) }} placeholder={kind === 'name' ? 'Nombre fiscal completo de la empresa' : kind === 'identification' ? 'Ej. 901173460-5' : 'Tu ID Effi'} />
               </Field>
             </fieldset>
             <Button type="submit" className="w-full" size="lg" loading={busy} disabled={!identifier.trim()}>Consultar beneficio</Button>
