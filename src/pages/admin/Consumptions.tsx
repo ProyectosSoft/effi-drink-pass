@@ -64,7 +64,7 @@ export default function Consumptions() {
 
   return (
     <div>
-      <PageHeader title="Consumos" subtitle="Historial inmutable · se actualiza cada 20 s" actions={<Button variant="secondary" icon={<Download className="size-4" />} onClick={exportCsv}>CSV</Button>} />
+      <PageHeader title="Consumos individuales" subtitle="Historial de pases individuales · Las entregas por cantidad están en Empresas y bebidas → Cupos y entregas por día." actions={<Button variant="secondary" icon={<Download className="size-4" />} onClick={exportCsv}>CSV</Button>} />
       <div className="card mb-4 grid grid-cols-2 gap-3 p-4 sm:grid-cols-4">
         <Field label="Día"><Select value={day} onChange={(e) => { setDay(e.target.value); setPage(1) }}>
           <option value="">Todos</option>

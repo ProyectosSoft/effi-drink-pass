@@ -33,6 +33,13 @@ class AppError extends Error {
  * Códigos no listados se muestran tal cual.
  */
 const FRIENDLY: Record<string, string> = {
+  INVALID_COMPANY: 'Revisa el ID, nombre, correo y cantidad de usuarios de la empresa (1 a 100000).',
+  COMPANY_EMAIL_CONFLICT: 'El correo ya está asignado a otra empresa.',
+  QUOTA_BELOW_DELIVERED: 'El cupo no puede ser menor que las bebidas ya entregadas hoy.',
+  INVALID_COMPANY_BATCH: 'El lote debe contener entre 1 y 500 empresas.',
+  DUPLICATE_COMPANY_ID: 'Hay ID Effi de empresa duplicados en el archivo.',
+  INVALID_QUANTITY: 'Indica una cantidad entera de bebidas mayor que cero.',
+  INDIVIDUAL_QUANTITY_ONE: 'Este pase individual solo permite una bebida.',
   FORBIDDEN: 'No tienes permiso para realizar esta acción.',
   UNAUTHENTICATED: 'Tu sesión expiró. Inicia sesión nuevamente.',
   NOT_FOUND: 'El registro no existe.',

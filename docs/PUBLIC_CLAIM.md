@@ -1,5 +1,7 @@
 # Acceso del cliente desde un QR general
 
+**Actualización:** el nuevo flujo por empresa, cantidad de usuarios y entregas parciales se describe en [COMPANY_QUOTAS.md](COMPANY_QUOTAS.md). Después de la migración 13, `/claim` usa `lookup_company_drink_pass`; el flujo individual descrito abajo se conserva como antecedente de la migración 12, no como el acceso actual de empresas.
+
 ## Flujo
 
 1. La organización abre **Administración → Configuración → QR de entrada para clientes** y descarga el SVG para colocarlo en la feria. Debe hacerlo desde el sitio con su URL pública definitiva.

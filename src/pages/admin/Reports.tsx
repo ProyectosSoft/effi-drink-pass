@@ -55,7 +55,7 @@ export default function Reports() {
 
   return (
     <div className="space-y-4">
-      <PageHeader title="Reportes" subtitle="Genere, revise y exporte a CSV (UTF-8, compatible con Excel)." />
+      <PageHeader title="Reportes individuales" subtitle="Pases individuales. Los cupos y entregas de empresas se consultan en Empresas y bebidas." />
       <Card>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <Field label="Reporte" className="lg:col-span-2">

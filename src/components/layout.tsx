@@ -91,6 +91,7 @@ const NAV: NavItem[] = [
   { to: '/admin', label: 'Dashboard', icon: <LayoutDashboard className="size-4" />, perms: [P.statisticsRead], end: true },
   { to: '/admin/scanner', label: 'Scanner', icon: <ScanLine className="size-4" />, perms: [P.benefitsValidate, P.benefitsRedeem] },
   { to: '/admin/attendees', label: 'Asistentes', icon: <Users className="size-4" />, perms: [P.attendeesRead] },
+  { to: '/admin/companies', label: 'Empresas y bebidas', icon: <GlassWater className="size-4" />, perms: [P.attendeesRead, P.attendeesWrite, P.attendeesImport] },
   { to: '/admin/benefits', label: 'Beneficios', icon: <Ticket className="size-4" />, perms: [P.benefitsRead] },
   { to: '/admin/consumptions', label: 'Consumos', icon: <Receipt className="size-4" />, perms: [P.consumptionsRead] },
   { to: '/admin/import', label: 'Importación', icon: <FileSpreadsheet className="size-4" />, perms: [P.attendeesImport] },

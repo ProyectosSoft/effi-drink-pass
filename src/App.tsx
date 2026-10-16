@@ -19,6 +19,7 @@ const ApiDocs = lazy(() => import('./pages/ApiDocs'))
 const AdminHome = lazy(() => import('./pages/admin/AdminHome'))
 const Scanner = lazy(() => import('./pages/admin/Scanner'))
 const Attendees = lazy(() => import('./pages/admin/Attendees'))
+const Companies = lazy(() => import('./pages/admin/Companies'))
 const AttendeeDetail = lazy(() => import('./pages/admin/AttendeeDetail'))
 const Import = lazy(() => import('./pages/admin/Import'))
 const Benefits = lazy(() => import('./pages/admin/Benefits'))
@@ -62,6 +63,7 @@ export function App() {
           <Route index element={<AdminIndex />} />
           <Route path="scanner" element={guard([P.benefitsValidate, P.benefitsRedeem], <Scanner />)} />
           <Route path="attendees" element={guard([P.attendeesRead], <Attendees />)} />
+          <Route path="companies" element={guard([P.attendeesRead, P.attendeesWrite, P.attendeesImport], <Companies />)} />
           <Route path="attendees/:id" element={guard([P.attendeesRead], <AttendeeDetail />)} />
           <Route path="import" element={guard([P.attendeesImport], <Import />)} />
           <Route path="benefits" element={guard([P.benefitsRead], <Benefits />)} />

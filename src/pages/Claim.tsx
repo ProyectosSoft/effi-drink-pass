@@ -13,6 +13,7 @@ type Lookup = {
   code: string
   retry_after?: number
   token?: string
+  company?: { name: string; effi_id: string; quota: number; delivered: number; remaining: number }
   event_day?: { name: string; date: string; start_time: string; end_time: string }
 }
 
@@ -25,6 +26,8 @@ const messages: Record<string, string> = {
   NOT_STARTED: 'Aún no ha comenzado el horario para reclamar tu bebida.',
   EXPIRED: 'El horario para reclamar la bebida de hoy ya terminó.',
   RATE_LIMITED: 'Hay demasiadas consultas. Espera un momento y vuelve a intentarlo.',
+  COMPANY_INACTIVE: 'La empresa está inactiva. Acércate al punto de información.',
+  QUOTA_EXHAUSTED: 'La empresa ya reclamó todas sus bebidas de hoy.',
 }
 
 /** Entrada del QR general: consulta pública, independiente del login del staff. */
@@ -35,14 +38,14 @@ export default function Claim() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<unknown>(null)
 
-  const lookup = async (e: FormEvent) => {
-    e.preventDefault()
+  const lookup = async (e?: FormEvent) => {
+    e?.preventDefault()
     if (busy) return
     setBusy(true)
     setResult(null)
     setError(null)
     try {
-      setResult(await rpc<Lookup>('lookup_drink_benefit', { p_kind: kind, p_identifier: identifier.trim() }))
+      setResult(await rpc<Lookup>('lookup_company_drink_pass', { p_kind: kind, p_identifier: identifier.trim() }))
     } catch (err) {
       setError(err)
     } finally {
@@ -55,18 +58,26 @@ export default function Claim() {
   return (
     <PublicShell>
       <section className="card glow mx-auto mt-6 max-w-md p-6 sm:mt-14 sm:p-8">
-        <h1 className="text-2xl font-bold">Reclama tu bebida</h1>
-        <p className="mt-2 text-sm text-muted">Consulta el beneficio de hoy con el correo o ID Effi de tu inscripción.</p>
+        <h1 className="text-2xl font-bold">Bebidas de tu empresa</h1>
+        <p className="mt-2 text-sm text-muted">Consulta el cupo de hoy con el correo o ID Effi registrado de tu empresa.</p>
 
         {result?.available && result.token && result.event_day ? (
           <div className="mt-6 flex flex-col items-center gap-4 text-center" aria-live="polite">
-            <p className="font-semibold text-ok">Tienes un beneficio disponible</p>
+            <p className="font-semibold text-ok">{result.company?.name}</p>
+            {result.company && <dl className="grid w-full grid-cols-3 gap-2 rounded-xl bg-surface-2 p-3 text-sm">
+              <div><dt>Cupo diario</dt><dd className="text-xl font-bold">{result.company.quota}</dd></div>
+              <div><dt>Entregadas</dt><dd className="text-xl font-bold">{result.company.delivered}</dd></div>
+              <div><dt>Disponibles</dt><dd className="text-xl font-bold text-ok">{result.company.remaining}</dd></div>
+            </dl>}
             <p className="text-sm">{result.event_day.name} · {fmtEventDate(result.event_day.date)}</p>
-            <QrCode value={qrPayload(config.publicAppUrl, result.token)} size={300} label="QR personal para reclamar la bebida de hoy" />
+            <QrCode value={qrPayload(config.publicAppUrl, result.token)} size={300} label="QR de la empresa para reclamar bebidas de hoy" />
             <p className="font-semibold">Muestra este QR al personal de la barra.</p>
-            <p className="text-xs text-muted">Horario: {hhmm(result.event_day.start_time)}–{hhmm(result.event_day.end_time)}. El personal confirma la entrega. Mostrar este código no consume tu beneficio.</p>
-            <p className="text-xs text-faint">No compartas este QR. Solo se puede reclamar una vez.</p>
-            <Button variant="secondary" onClick={reset}>Finalizar consulta</Button>
+            <p className="text-xs text-muted">Horario: {hhmm(result.event_day.start_time)}–{hhmm(result.event_day.end_time)}. El operador indica cuántas bebidas entrega y el sistema las descuenta del saldo de hoy.</p>
+            <p className="text-xs text-faint">Puedes hacer entregas parciales hasta agotar el cupo. El saldo se vuelve a comprobar en la barra. No compartas este QR fuera de tu empresa.</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button variant="secondary" onClick={() => void lookup()}>Actualizar saldo</Button>
+              <Button variant="ghost" onClick={reset}>Finalizar consulta</Button>
+            </div>
           </div>
         ) : (
           <form onSubmit={lookup} className="mt-6 space-y-4">
@@ -84,7 +95,7 @@ export default function Claim() {
             </fieldset>
             <Button type="submit" className="w-full" size="lg" loading={busy} disabled={!identifier.trim()}>Consultar beneficio</Button>
             {result && <p role="status" className="rounded-xl border border-line bg-surface-2 p-4 text-sm">
-              {messages[result.code] ?? 'No encontramos un beneficio disponible para hoy con ese dato. Revisa tu inscripción o acércate al punto de información.'}
+              {messages[result.code] ?? 'No encontramos un cupo habilitado para hoy con ese dato. Revisa el registro de la empresa o acércate al punto de información.'}
             </p>}
             <ErrorBox error={error} />
             <p className="text-xs text-faint">No necesitas contraseña ni código por correo. Usa únicamente tus propios datos.</p>

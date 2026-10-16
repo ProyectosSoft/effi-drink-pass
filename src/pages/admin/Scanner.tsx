@@ -9,17 +9,13 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router'
 import { extractToken } from '@shared/qr.ts'
 import { Button, Input } from '@/components/ui'
+import { DeliveryForm } from '@/components/DeliveryForm'
 import { useAuth } from '@/lib/auth'
 import { feedbackError, feedbackSuccess, feedbackWarning, unlockAudio } from '@/lib/feedback'
 import { fmtEventDate, fmtTime, fullName } from '@/lib/format'
 import { query, rpc, supabase, toAppError } from '@/lib/supabase'
 import { PERMISSIONS as P, type ScanResult } from '@/lib/types'
 
-/**
- * Modo de operación: 'auto' canjea en cuanto lee un QR válido; 'confirm' valida primero,
- * muestra los datos del asistente y espera a que el operador confirme la entrega.
- */
-type Mode = 'auto' | 'confirm'
 /**
  * Máquina de estados de la pantalla:
  * scanning → (working) → confirm | result | offline | error → scanning.
@@ -33,8 +29,6 @@ type Phase =
   | { kind: 'offline'; retry: () => void }
   | { kind: 'error'; message: string }
 
-/** Preferencia de modo por dispositivo (localStorage). */
-const MODE_KEY = 'edp:scanner-mode'
 
 /** Presentación de cada resultado del servidor. */
 function present(code: ScanResult['code']): { title: string; tone: 'ok' | 'warn' | 'bad' | 'info'; icon: ReactNode } {
@@ -50,6 +44,10 @@ function present(code: ScanResult['code']): { title: string; tone: 'ok' | 'warn'
     case 'CANCELLED': return { title: 'BENEFICIO CANCELADO', tone: 'bad', icon: <Ban className="size-20" /> }
     case 'DAY_INACTIVE': return { title: 'DÍA NO HABILITADO', tone: 'bad', icon: <CalendarX className="size-20" /> }
     case 'RATE_LIMITED': return { title: 'DEMASIADOS INTENTOS', tone: 'warn', icon: <AlertTriangle className="size-20" /> }
+    case 'COMPANY_INACTIVE': return { title: 'EMPRESA INACTIVA', tone: 'bad', icon: <UserX className="size-20" /> }
+    case 'QUOTA_EXHAUSTED': return { title: 'CUPO DE HOY AGOTADO', tone: 'warn', icon: <Ban className="size-20" /> }
+    case 'INSUFFICIENT_QUOTA': return { title: 'LA CANTIDAD SUPERA EL SALDO', tone: 'bad', icon: <AlertTriangle className="size-20" /> }
+    case 'IDEMPOTENCY_KEY_REUSED': return { title: 'INTENTO YA UTILIZADO', tone: 'bad', icon: <AlertTriangle className="size-20" /> }
     default: return { title: 'QR INVÁLIDO', tone: 'bad', icon: <XCircle className="size-20" /> }
   }
 }
@@ -70,17 +68,7 @@ function newKey() {
   return `scan-${crypto.randomUUID()}`
 }
 
-/**
- * /admin/scanner — escáner de QR para la barra. Requiere `benefitsValidate` o `benefitsRedeem`.
- * · Con solo `benefitsValidate` funciona en modo consulta: valida (`benefit_validate`) y
- *   muestra el resultado, pero no puede canjear ni usar el modo automático.
- * · Con `benefitsRedeem` canjea vía `benefit_redeem` con Idempotency-Key, en modo
- *   confirmación o automático.
- * · Sin conexión nunca da un consumo por confirmado: muestra un bloqueo con reintento seguro.
- * · Un token recibido por URL (?token=, desde /qr/:token) siempre pasa por confirmación,
- *   para que abrir un enlace no canjee un beneficio sin intervención del operador.
- * · Registra SCANNER_OPENED en auditoría y da feedback sonoro/háptico por resultado.
- */
+/** Escáner con confirmación de cantidad. Los reintentos conservan token, cantidad y clave. */
 export default function Scanner() {
   const { can, access } = useAuth()
   const [params, setParams] = useSearchParams()
@@ -98,25 +86,8 @@ export default function Scanner() {
   // Segundos que el resultado queda en pantalla antes de volver a escanear.
   const autoReturn = Number(settings.data?.scanner_auto_return_seconds ?? 4)
 
-  // Precedencia del modo: elección del operador en este dispositivo > valor por defecto
-  // global (`scanner_default_mode`) > 'confirm'. `modeTouched` indica si hubo elección local.
-  const [mode, setModeState] = useState<Mode>(() => {
-    try { return (localStorage.getItem(MODE_KEY) as Mode) || 'confirm' } catch { return 'confirm' }
-  })
-  const [modeTouched, setModeTouched] = useState(() => {
-    try { return Boolean(localStorage.getItem(MODE_KEY)) } catch { return false }
-  })
-  useEffect(() => {
-    const def = settings.data?.scanner_default_mode
-    if (!modeTouched && (def === 'auto' || def === 'confirm')) setModeState(def)
-  }, [settings.data, modeTouched])
-  const setMode = (m: Mode) => {
-    setModeState(m)
-    setModeTouched(true)
-    try { localStorage.setItem(MODE_KEY, m) } catch { /* ignorar */ }
-  }
-  // Sin permiso de canje el modo automático no aplica, aunque esté guardado.
-  const effectiveMode: Mode = canRedeem ? mode : 'confirm'
+  const deliveryBusy = useRef(false)
+  const countedDeliveries = useRef(new Set<string>())
 
   const [phase, setPhase] = useState<Phase>({ kind: 'scanning' })
   // Ref con la fase actual para el callback de la cámara, que se crea una sola vez y
@@ -145,7 +116,14 @@ export default function Scanner() {
 
   /** Muestra el resultado con su feedback (éxito, advertencia o error) y cuenta las entregas. */
   const showResult = useCallback((r: ScanResult) => {
-    if (r.code === 'APPROVED') { feedbackSuccess(); setServed((n) => n + 1) }
+    if (r.code === 'APPROVED') {
+      feedbackSuccess()
+      const id = r.consumption?.id
+      if (id && !countedDeliveries.current.has(id)) {
+        countedDeliveries.current.add(id)
+        setServed((n) => n + (r.quantity ?? 1))
+      }
+    }
     else if (r.code === 'VALID') feedbackSuccess()
     else if (r.code === 'ALREADY_CONSUMED' || r.code === 'RATE_LIMITED') feedbackWarning()
     else feedbackError()
@@ -154,16 +132,18 @@ export default function Scanner() {
 
   // Consumo con Idempotency-Key: un reintento tras un corte de red nunca duplica el consumo.
   // El `retry` de la fase offline reutiliza la misma `key` a propósito.
-  const redeem = useCallback(async (token: string, key: string) => {
+  const redeem = useCallback(async (token: string, key: string, quantity: number) => {
+    if (deliveryBusy.current) return
     if (!navigator.onLine) {
       feedbackError()
-      setPhase({ kind: 'offline', retry: () => void redeem(token, key) })
+      setPhase({ kind: 'offline', retry: () => void redeem(token, key, quantity) })
       return
     }
-    setPhase({ kind: 'working', label: 'Registrando consumo…' })
+    deliveryBusy.current = true
+    setPhase({ kind: 'working', label: 'Registrando entrega…' })
     try {
-      const r = await rpc<ScanResult>('benefit_redeem', {
-        p_token: token, p_idempotency_key: key, p_metadata: { source: 'scanner', mode: effectiveMode },
+      const r = await rpc<ScanResult>('drink_pass_redeem', {
+        p_token: token, p_quantity: quantity, p_idempotency_key: key,
       })
       showResult(r)
     } catch (e) {
@@ -172,20 +152,20 @@ export default function Scanner() {
       // clave es seguro. Cualquier otro error se muestra tal cual.
       if (err.network) {
         feedbackError()
-        setPhase({ kind: 'offline', retry: () => void redeem(token, key) })
+        setPhase({ kind: 'offline', retry: () => void redeem(token, key, quantity) })
       } else {
         feedbackError()
         setPhase({ kind: 'error', message: err.message })
       }
     }
-  }, [effectiveMode, showResult])
+    finally { deliveryBusy.current = false }
+  }, [showResult])
 
   /**
    * Procesa una lectura (cámara, ingreso manual o URL). Acepta el token solo o la URL
-   * completa del QR. `forceConfirm` obliga a validar y pedir confirmación aunque el
-   * modo sea automático.
+   * completa del QR. Siempre valida y solicita confirmación antes de entregar.
    */
-  const process = useCallback(async (raw: string, forceConfirm = false) => {
+  const process = useCallback(async (raw: string) => {
     const token = extractToken(raw)
     // Formato inválido: se rechaza localmente sin consultar al servidor.
     if (!token) {
@@ -195,16 +175,12 @@ export default function Scanner() {
     }
     if (!navigator.onLine) {
       feedbackError()
-      setPhase({ kind: 'offline', retry: () => void process(raw, forceConfirm) })
-      return
-    }
-    if (effectiveMode === 'auto' && !forceConfirm) {
-      await redeem(token, newKey())
+      setPhase({ kind: 'offline', retry: () => void process(raw) })
       return
     }
     setPhase({ kind: 'working', label: 'Validando…' })
     try {
-      const r = await rpc<ScanResult>('benefit_validate', { p_token: token })
+      const r = await rpc<ScanResult>('drink_pass_validate', { p_token: token })
       // Solo se ofrece "Confirmar entrega" si el QR es válido y el operador puede canjear;
       // en otro caso se muestra el resultado de la validación.
       if (r.code === 'VALID' && canRedeem) {
@@ -216,9 +192,9 @@ export default function Scanner() {
     } catch (e) {
       const err = toAppError(e)
       feedbackError()
-      setPhase(err.network ? { kind: 'offline', retry: () => void process(raw, forceConfirm) } : { kind: 'error', message: err.message })
+      setPhase(err.network ? { kind: 'offline', retry: () => void process(raw) } : { kind: 'error', message: err.message })
     }
-  }, [effectiveMode, canRedeem, redeem, showResult])
+  }, [canRedeem, showResult])
 
   // Token recibido desde /qr/:token (cámara nativa): siempre en modo confirmación.
   // Se quita de la URL antes de procesarlo para que recargar o volver atrás no lo reenvíe.
@@ -226,7 +202,7 @@ export default function Scanner() {
     const t = params.get('token')
     if (t) {
       setParams({}, { replace: true })
-      void process(t, true)
+      void process(t)
     }
   }, [params, setParams, process])
 
@@ -247,16 +223,7 @@ export default function Scanner() {
     <div className="mx-auto flex min-h-[calc(100dvh-57px)] max-w-2xl flex-col lg:min-h-[calc(100dvh-2rem)]">
       {/* Barra superior */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-        <div className="grid grid-cols-2 gap-1 rounded-xl bg-surface-2 p-1 text-xs font-semibold" role="radiogroup" aria-label="Modo del scanner">
-          {(['confirm', 'auto'] as const).map((m) => (
-            <button key={m} role="radio" aria-checked={effectiveMode === m} disabled={!canRedeem && m === 'auto'}
-              // unlockAudio en un gesto del usuario: iOS/Safari bloquea el audio hasta entonces.
-              onClick={() => { unlockAudio(); setMode(m) }}
-              className={clsx('rounded-lg px-3 py-2 transition disabled:opacity-40', effectiveMode === m ? 'brand-gradient text-white' : 'text-muted')}>
-              {m === 'confirm' ? 'Confirmación' : 'Automático'}
-            </button>
-          ))}
-        </div>
+        <p className="text-sm font-semibold">Escanea y confirma la cantidad a entregar</p>
         <div className="text-right text-xs text-muted">
           <p className="font-semibold text-ink">{operator}</p>
           <p>Entregadas en esta sesión: <span className="font-bold text-brand tabular-nums">{served}</span></p>
@@ -274,7 +241,7 @@ export default function Scanner() {
         <CameraView active={phase.kind === 'scanning' && online} onDecode={(data) => { if (phaseRef.current.kind === 'scanning') void process(data) }} />
 
         {phase.kind !== 'scanning' && (
-          <div className="absolute inset-0 z-10 mx-4 flex flex-col overflow-hidden rounded-3xl" aria-live="assertive">
+          <div className="absolute inset-0 z-10 mx-4 flex flex-col overflow-y-auto rounded-3xl" aria-live="assertive">
             {phase.kind === 'working' && (
               <div className="flex flex-1 flex-col items-center justify-center gap-4 bg-surface">
                 <RefreshCcw className="size-12 animate-spin text-brand" />
@@ -304,11 +271,8 @@ export default function Scanner() {
 
             {phase.kind === 'confirm' && (
               <ResultPanel result={phase.result} operator={operator}>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button variant="secondary" size="xl" onClick={backToScan}>Cancelar</Button>
-                  {/* Cada confirmación es un intento nuevo, con su propia Idempotency-Key. */}
-                  <Button variant="success" size="xl" onClick={() => { unlockAudio(); void redeem(phase.token, newKey()) }}>Confirmar entrega</Button>
-                </div>
+                <DeliveryForm result={phase.result} onCancel={backToScan}
+                  onConfirm={(quantity) => { unlockAudio(); void redeem(phase.token, newKey(), quantity) }} />
               </ResultPanel>
             )}
 
@@ -355,10 +319,19 @@ function ResultPanel({ result, operator, children, onTap, countdown }: {
       <button type="button" onClick={onTap} disabled={!onTap} className="flex flex-1 flex-col items-center justify-center gap-3 p-5 text-center">
         {p.icon}
         <p className="text-3xl leading-tight font-extrabold tracking-tight sm:text-4xl">{p.title}</p>
-        {result.code === 'APPROVED' && <p className="text-lg font-bold opacity-90">BEBIDA ENTREGADA</p>}
+        {result.code === 'APPROVED' && <p className="text-lg font-bold opacity-90">{result.quantity ?? 1} BEBIDA(S) ENTREGADA(S)</p>}
         {/* Reintento con la misma Idempotency-Key: el servidor devolvió el resultado original sin volver a canjear. */}
         {result.idempotent_replay && <p className="text-xs opacity-80">(respuesta confirmada de un intento anterior)</p>}
       </button>
+      {result.company && <dl className="mx-4 mb-3 rounded-xl bg-black/20 p-4 text-sm">
+        <dt>Empresa</dt><dd className="text-xl font-bold">{result.company.name}</dd>
+        <dt>ID Effi</dt><dd className="font-mono">{result.company.effi_id}</dd>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <div><dt>Cupo diario</dt><dd className="text-xl font-bold">{result.company.quota}</dd></div>
+          <div><dt>Entregadas</dt><dd className="text-xl font-bold">{result.company.delivered}</dd></div>
+          <div><dt>Disponibles</dt><dd className="text-xl font-bold">{result.company.remaining}</dd></div>
+        </div>
+      </dl>}
       {(a || b) && (
         <dl className="mx-4 mb-4 grid grid-cols-2 gap-x-4 gap-y-2 rounded-2xl bg-black/20 p-4 text-left text-sm">
           {a && <div className="col-span-2"><dt className="text-xs opacity-75">Usuario</dt><dd className="text-lg font-bold">{fullName(a)}</dd></div>}
