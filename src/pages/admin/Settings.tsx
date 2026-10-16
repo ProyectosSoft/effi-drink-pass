@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Plus } from 'lucide-react'
 import { useState } from 'react'
 import { EntryQr } from '@/components/EntryQr'
-import { Badge, Button, Card, Checkbox, ErrorBox, Field, Input, Modal, PageHeader, Select, useToast } from '@/components/ui'
+import { Badge, Button, Card, Checkbox, ErrorBox, Field, Input, Modal, PageHeader, useToast } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { fmtEventDate, hhmm } from '@/lib/format'
 import { query, rpc, supabase } from '@/lib/supabase'
@@ -90,12 +90,7 @@ export default function Settings() {
         <Card title="Aplicación">
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nombre del evento"><Input value={val('event_name')} onChange={(e) => setDraft({ ...draft, event_name: e.target.value })} /></Field>
-            <Field label="Modo por defecto del scanner" hint="Cada operador puede cambiarlo en su dispositivo">
-              <Select value={val('scanner_default_mode')} onChange={(e) => setDraft({ ...draft, scanner_default_mode: e.target.value })}>
-                <option value="confirm">Confirmación (muestra datos y el operador confirma)</option>
-                <option value="auto">Automático (QR válido → consume de inmediato)</option>
-              </Select>
-            </Field>
+            <p className="text-sm text-muted">El escáner solicita confirmación de cantidad en cada entrega.</p>
             <Field label="Segundos para volver al scanner"><Input type="number" min={1} max={30} value={val('scanner_auto_return_seconds')} onChange={(e) => setDraft({ ...draft, scanner_auto_return_seconds: e.target.value })} /></Field>
             <Field label="Contacto de soporte (visible a asistentes)"><Input value={val('support_contact')} onChange={(e) => setDraft({ ...draft, support_contact: e.target.value })} /></Field>
           </div>

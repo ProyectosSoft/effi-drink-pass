@@ -3,6 +3,7 @@ import { RefreshCcw, ScanLine } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { ChartCard } from '@/components/charts'
+import { CompanyOverview } from '@/components/CompanyOverview'
 import { Button, ErrorBox, Field, Input, PageHeader, Select, Spinner, Stat } from '@/components/ui'
 import { useAuth } from '@/lib/auth'
 import { fmtDateTime, fmtEventDate, num } from '@/lib/format'
@@ -54,6 +55,9 @@ export default function AdminHome() {
           {can(P.benefitsRedeem) && <Link to="/admin/scanner"><Button icon={<ScanLine className="size-4" />}>Scanner</Button></Link>}
         </>}
       />
+
+      <CompanyOverview />
+      <h2 className="my-4 text-lg font-semibold">Pases individuales anteriores</h2>
 
       <form className="card mb-6 grid grid-cols-2 gap-3 p-4 sm:grid-cols-4 lg:grid-cols-8"
         onSubmit={(e) => { e.preventDefault(); setFilters(draft) }}>

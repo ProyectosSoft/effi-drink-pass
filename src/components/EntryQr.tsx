@@ -30,7 +30,7 @@ export function EntryQr() {
         </div>
         <div className="space-y-3 text-sm">
           <p className="font-semibold">Escanea para consultar tu beneficio de bebida</p>
-          <p className="text-muted">Este QR abre la consulta por correo o ID Effi. Si el beneficio de hoy está disponible, se muestra el QR personal para reclamar la bebida.</p>
+          <p className="text-muted">Este QR abre la consulta por correo o ID Effi de la empresa. Si tiene saldo hoy, muestra el QR para que el operador registre la cantidad de bebidas entregadas.</p>
           <p className="break-all text-xs text-faint">{url}</p>
           <div className="flex flex-wrap gap-2">
             <Button onClick={() => void download()}>Descargar QR</Button>

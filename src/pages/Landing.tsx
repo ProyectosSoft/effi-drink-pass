@@ -27,13 +27,13 @@ export function Landing() {
         <div className="relative mx-auto max-w-3xl text-center">
           <p className="mb-4 inline-flex rounded-full border border-line bg-surface px-3 py-1 text-xs text-muted">Feria Effix 2026</p>
           <h1 className="text-4xl font-extrabold tracking-tight text-balance sm:text-6xl">
-            Tu bebida del día, <span className="brand-text">en un QR</span>.
+            Las bebidas de tu empresa, <span className="brand-text">en un QR</span>.
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-base text-muted text-balance sm:text-lg">
-            Consulta con tu correo o ID Effi, abre el QR de hoy y muéstralo en la barra. Un beneficio por día, válido solo en su fecha.
+            Consulta con el correo o ID Effi de tu empresa. El cupo diario corresponde a su cantidad de usuarios y cada entrega descuenta el saldo.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Link to="/claim"><Button size="lg" icon={<QrCode className="size-5" />}>Reclamar mi bebida</Button></Link>
+            <Link to="/claim"><Button size="lg" icon={<QrCode className="size-5" />}>Consultar cupo de mi empresa</Button></Link>
             {session && <Link to="/my-benefits"><Button size="lg" variant="secondary">Mis beneficios</Button></Link>}
             {/* staff=1 hace que el login muestre directamente el acceso con contraseña. */}
             <Link to="/login?staff=1"><Button size="lg" variant="secondary" icon={<ScanLine className="size-5" />}>Soy staff</Button></Link>
@@ -43,8 +43,8 @@ export function Landing() {
 
       <section className="grid gap-4 sm:grid-cols-3">
         {[
-          { icon: <QrCode className="size-6" />, title: 'Un QR por día', text: 'Cada día elegible tiene su propio código. No contiene datos personales.' },
-          { icon: <ShieldCheck className="size-6" />, title: 'Seguro', text: 'Validado en tiempo real por el servidor; un beneficio solo se puede usar una vez.' },
+          { icon: <QrCode className="size-6" />, title: 'Cupo por empresa', text: 'Una bebida por usuario y día habilitado. Sin cantidad de usuarios registrada, el cupo es de una bebida.' },
+          { icon: <ShieldCheck className="size-6" />, title: 'Entregas controladas', text: 'El operador indica cuántas bebidas entrega. El servidor impide superar el saldo disponible.' },
           { icon: <CalendarDays className="size-6" />, title: 'Hora oficial', text: 'La fecha y hora las define el servidor (hora de Colombia).' },
         ].map((f) => (
           <div key={f.title} className="card p-5">

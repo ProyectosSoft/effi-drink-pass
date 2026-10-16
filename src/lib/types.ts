@@ -53,12 +53,16 @@ export type ScanCode =
   | 'APPROVED' | 'VALID' | 'ALREADY_CONSUMED' | 'INVALID_QR' | 'BENEFIT_NOT_FOUND' | 'NOT_TODAY' | 'NOT_STARTED'
   | 'NOT_ELIGIBLE' | 'ATTENDEE_INACTIVE' | 'EXPIRED' | 'CANCELLED' | 'DAY_INACTIVE' | 'RATE_LIMITED'
   | 'IDEMPOTENCY_KEY_REUSED'
+  | 'COMPANY_INACTIVE' | 'QUOTA_EXHAUSTED' | 'INSUFFICIENT_QUOTA'
 
 /**
  * Resultado de validar (`validate`, solo consulta) o canjear (`redeem`) un QR.
  * Las fechas/horas siempre vienen del servidor para no depender del reloj del dispositivo.
  */
 export type ScanResult = {
+  kind?: 'company'
+  quantity?: number
+  company?: { id: string; name: string; effi_id: string; quota: number; delivered: number; remaining: number }
   ok: boolean
   code: ScanCode
   message: string

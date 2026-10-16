@@ -1,6 +1,8 @@
 # Effi Drink Pass
 
-Sistema **independiente** de beneficios de bebidas de la **Feria Effix 2026**: cada asistente recibe un beneficio por día elegible, lo muestra como QR y el staff lo valida y consume en la barra. Un beneficio se consume **una sola vez** y solo **en su día**.
+Sistema **independiente** de beneficios de bebidas de la **Feria Effix 2026**. Cada empresa tiene un cupo diario igual a su cantidad de usuarios (cantidad vacía = 1). El cliente consulta su QR y el staff registra cuántas bebidas entrega, sin superar el saldo. Los pases individuales anteriores conservan su canje de una sola bebida por día.
+
+Ver [cupos por empresa](docs/COMPANY_QUOTAS.md) para configuración, importación, entregas parciales y migración.
 
 - Propios: base de datos, autenticación, usuarios, roles, asistentes, beneficios, QR, consumos, auditoría y API.
 - `effi_id` / `effi_username` son solo identificadores externos opcionales. El sistema **no se conecta a Effi** y funciona aunque Effi no exista.
