@@ -158,6 +158,7 @@ export const PERMISSIONS = {
   benefitsRedeem: 'benefits:redeem',
   benefitsOverride: 'benefits:override',
   consumptionsRead: 'consumptions:read',
+  consumptionsManual: 'consumptions:manual',
   statisticsRead: 'statistics:read',
   reportsRead: 'reports:read',
   auditRead: 'audit:read',

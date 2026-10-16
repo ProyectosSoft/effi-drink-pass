@@ -11,7 +11,7 @@ import { CompanyImport } from './CompanyImport'
 
 type Company = CompanyInput & { id: string; active: boolean }
 type Balance = { id: string; company_id: string; event_day_id: string; effi_id: string; name: string; date: string; quota: number; delivered: number; remaining: number; eligible: boolean }
-type Delivery = { id: string; company_day_id: string; quantity: number; operator_label: string; delivered_at: string }
+type Delivery = { id: string; company_day_id: string; quantity: number; operator_label: string; delivered_at: string; is_manual: boolean; manual_reason: string | null }
 const PAGE = 50
 
 export default function Companies() {
@@ -20,6 +20,7 @@ export default function Companies() {
   const [search, setSearch] = useState(''), [page, setPage] = useState(1)
   const [editing, setEditing] = useState<Company | 'new' | null>(null)
   const [inspecting, setInspecting] = useState<Balance | null>(null)
+  const [manual, setManual] = useState<Balance | null>(null)
   const [historyPage, setHistoryPage] = useState(1)
   const [day, setDay] = useState('')
   const canRead = can(P.attendeesRead)
@@ -66,15 +67,19 @@ export default function Companies() {
         <Button className="mt-3" variant="secondary" disabled={!balances.data?.data.length} onClick={() => downloadCsv('cupos-empresas-pagina.csv', balances.data!.data.map((b) => ({ empresa: b.name, id_effi: b.effi_id, fecha: b.date, cupo: b.quota, entregadas: b.delivered, disponibles: b.remaining })))}>CSV de esta página</Button>
         <div className="mt-4 overflow-x-auto"><table className="table-base"><thead><tr><th>Empresa</th><th>Día</th><th>Cupo</th><th>Entregadas</th><th>Disponibles</th><th>Habilitado</th><th /></tr></thead>
           <tbody>{balances.data?.data.map((b) => <tr key={b.id}><td>{b.name}<br /><span className="text-xs text-muted">{b.effi_id}</span></td><td>{b.date}</td><td>{b.quota}</td><td>{b.delivered}</td><td>{b.remaining}</td><td>{b.eligible ? 'Sí' : 'No'}</td>
-            <td>{can(P.consumptionsRead) && <Button size="sm" variant="secondary" onClick={() => { setHistoryPage(1); setInspecting(b) }}>Ver entregas</Button>}</td></tr>)}</tbody></table></div>
+            <td>{can(P.consumptionsManual) && <Button size="sm" variant="secondary" disabled={!b.eligible || b.remaining < 1} onClick={() => setManual(b)}>Registrar consumo manual</Button>} {can(P.consumptionsRead) && <Button size="sm" variant="secondary" onClick={() => { setHistoryPage(1); setInspecting(b) }}>Ver entregas</Button>}</td></tr>)}</tbody></table></div>
         <Pagination page={page} pageSize={PAGE} total={balances.data?.count ?? 0} onPage={setPage} />
       </Card>}
+      {manual && <ManualDeliveryModal balance={manual} onClose={() => setManual(null)} onSaved={() => {
+        setManual(null)
+        for (const key of ['company-balances', 'company-deliveries', 'company-statistics']) void qc.invalidateQueries({ queryKey: [key] })
+      }} />}
       {editing && <CompanyModal company={editing === 'new' ? null : editing} days={days.data ?? []} onClose={() => setEditing(null)} onSaved={() => {
         setEditing(null); void qc.invalidateQueries({ queryKey: ['drink-companies'] }); void qc.invalidateQueries({ queryKey: ['company-balances'] })
       }} />}
       {inspecting && <Modal open title={`Entregas: ${inspecting.name} · ${inspecting.date}`} onClose={() => setInspecting(null)} size="lg">
         <ErrorBox error={history.error} />{history.isLoading && <Spinner />}
-        <table className="table-base"><thead><tr><th>Hora</th><th>Bebidas</th><th>Operador</th></tr></thead><tbody>{history.data?.data.map((d) => <tr key={d.id}><td>{fmtDateTime(d.delivered_at)}</td><td>{d.quantity}</td><td>{d.operator_label}</td></tr>)}</tbody></table>
+        <table className="table-base"><thead><tr><th>Registrado el</th><th>Bebidas</th><th>Operador</th><th>Motivo</th></tr></thead><tbody>{history.data?.data.map((d) => <tr key={d.id}><td>{fmtDateTime(d.delivered_at)}</td><td>{d.quantity}</td><td>{d.operator_label}</td><td>{d.is_manual ? `Manual: ${d.manual_reason}` : 'QR'}</td></tr>)}</tbody></table>
         <Pagination page={historyPage} pageSize={PAGE} total={history.data?.count ?? 0} onPage={setHistoryPage} />
         {history.data?.count === 0 && <p className="py-3 text-sm text-muted">Sin entregas registradas.</p>}
       </Modal>}
@@ -105,6 +110,33 @@ function CompanyModal({ company, days, onClose, onSaved }: { company: Company | 
       <fieldset disabled={busy}><legend className="mb-2 text-sm font-semibold">Días elegibles</legend>{days.map((d) => <Checkbox key={d.id} label={`${d.name} · ${d.date}`} checked={selected.includes(d.id)} onChange={(v) => setSelected((ids) => v ? [...ids, d.id] : ids.filter((x) => x !== d.id))} />)}</fieldset>
       {!selected.length && <p className="text-xs text-warn">Sin días asignados, la empresa no podrá reclamar bebidas.</p>}
       <ErrorBox error={error ?? assigned.error} />
+    </div>
+  </Modal>
+}
+
+function ManualDeliveryModal({ balance, onClose, onSaved }: { balance: Balance; onClose: () => void; onSaved: () => void }) {
+  const [quantity, setQuantity] = useState('1')
+  const [reason, setReason] = useState('')
+  const [key] = useState(() => `manual:${crypto.randomUUID()}`)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<unknown>(null)
+  const [submitted, setSubmitted] = useState(false)
+  const save = async () => {
+    setBusy(true); setSubmitted(true); setError(null)
+    try {
+      await rpc('record_manual_company_delivery', { p_company_day_id: balance.id, p_quantity: Number(quantity), p_reason: reason, p_idempotency_key: key })
+      onSaved()
+    } catch (err) { setError(err) } finally { setBusy(false) }
+  }
+  return <Modal open title="Registrar consumo manual" onClose={() => { if (!busy) onClose() }} footer={<Button loading={busy}
+    disabled={busy || !Number.isInteger(Number(quantity)) || Number(quantity) < 1 || Number(quantity) > balance.remaining || reason.trim().length < 5}
+    onClick={() => void save()}>{submitted ? 'Reintentar registro' : 'Confirmar consumo'}</Button>}>
+    <div className="space-y-3">
+      <p><strong>{balance.name}</strong> · Día del consumo: <strong>{balance.date}</strong></p>
+      <p className="text-sm text-muted">Se descontará del saldo de ese día ({balance.remaining} disponibles). Se conservarán el operador y la fecha actual del registro. Revisa las entregas existentes antes de confirmar.</p>
+      <Field label="Cantidad de bebidas"><Input type="number" min={1} max={balance.remaining} step={1} value={quantity} disabled={submitted} onChange={(e) => setQuantity(e.target.value)} /></Field>
+      <Field label="Motivo del registro manual"><Input value={reason} minLength={5} maxLength={1000} disabled={submitted} placeholder="Entrega realizada durante operación manual" onChange={(e) => setReason(e.target.value)} /></Field>
+      <ErrorBox error={error} />
     </div>
   </Modal>
 }

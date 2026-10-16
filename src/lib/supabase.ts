@@ -33,6 +33,11 @@ class AppError extends Error {
  * Códigos no listados se muestran tal cual.
  */
 const FRIENDLY: Record<string, string> = {
+  MANUAL_REASON_REQUIRED: 'Indica un motivo de entre 5 y 1000 caracteres.',
+  MANUAL_FUTURE_DAY: 'Solo puedes registrar consumos de hoy o días anteriores.',
+  MANUAL_NOT_ELIGIBLE: 'La empresa no tiene habilitado ese día.',
+  INSUFFICIENT_QUOTA: 'La cantidad supera el saldo disponible de ese día.',
+  IDEMPOTENCY_KEY_REUSED: 'Este registro ya fue enviado con otros datos. Cierra y abre el formulario.',
   INVALID_COMPANY: 'Revisa el ID, nombre, correo y cantidad de usuarios de la empresa (1 a 100000).',
   COMPANY_EMAIL_CONFLICT: 'El correo ya está asignado a otra empresa.',
   QUOTA_BELOW_DELIVERED: 'El cupo no puede ser menor que las bebidas ya entregadas hoy.',

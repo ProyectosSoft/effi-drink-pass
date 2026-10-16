@@ -22,6 +22,80 @@ describe('cupos de bebidas por empresa y día', () => {
     p_data: { effi_id: 'EMP-001', name: 'Empresa prueba', user_count: count }, p_event_day_ids: days ?? null,
   })
 
+  const manual = async (date = '2026-10-15', quantity = 2, key = 'manual-test-0001', actor?: string, reason = 'Entrega en operación manual') => {
+    const pass = await one<{ id: string }>(s.db, 'select id from public.company_drink_days where company_id = $1 and event_day_id = $2', [companyId, s.days[date]])
+    return rpc<string>(s.db, actor ?? s.superAdmin.authId, 'record_manual_company_delivery', {
+      p_company_day_id: pass.id, p_quantity: quantity, p_reason: reason, p_idempotency_key: key,
+    })
+  }
+
+  it('registra ayer sin modificar el saldo de hoy y audita fecha efectiva y operador', async () => {
+    await manual()
+    expect((await lookup()).company.delivered).toBe(0)
+    expect(await one(s.db, 'select delivered from public.company_drink_days where company_id = $1 and event_day_id = $2', [companyId, s.days['2026-10-15']])).toEqual({ delivered: 2 })
+    expect(await one(s.db, 'select is_manual, manual_reason, operator_id from public.company_drink_deliveries')).toEqual({ is_manual: true, manual_reason: 'Entrega en operación manual', operator_id: s.superAdmin.profileId })
+    expect(await one(s.db, "select count(*)::int n from public.audit_logs where action = 'MANUAL_COMPANY_DRINK_DELIVERY' and metadata ->> 'event_date' = '2026-10-15'")).toEqual({ n: 1 })
+  })
+
+  it('exige permiso específico y permite otorgarlo y revocarlo', async () => {
+    for (const actor of [s.admin, s.operator, s.viewer]) await expect(manual(undefined, undefined, undefined, actor.authId)).rejects.toThrow('FORBIDDEN')
+    await s.db.exec("insert into public.role_permissions select r.id, p.id from public.roles r cross join public.permissions p where r.name = 'admin' and p.name = 'consumptions:manual'")
+    await manual(undefined, undefined, undefined, s.admin.authId)
+    await s.db.exec("delete from public.role_permissions where permission_id = (select id from public.permissions where name = 'consumptions:manual') and role_id = (select id from public.roles where name = 'admin')")
+    await expect(manual(undefined, undefined, 'manual-revoked', s.admin.authId)).rejects.toThrow('FORBIDDEN')
+  })
+
+  it('rechaza futuro, cantidades inválidas, falta de motivo y exceso de saldo sin descuentos', async () => {
+    await expect(manual('2026-10-17')).rejects.toThrow('MANUAL_FUTURE_DAY')
+    await expect(manual(undefined, 0)).rejects.toThrow('INVALID_QUANTITY')
+    await expect(manual(undefined, 6)).rejects.toThrow('INSUFFICIENT_QUOTA')
+    await expect(manual(undefined, 1, undefined, undefined, '')).rejects.toThrow('MANUAL_REASON_REQUIRED')
+    expect(await one(s.db, 'select sum(delivered)::int n from public.company_drink_days')).toEqual({ n: 0 })
+  })
+
+  it('reintenta sin duplicar y comparte el saldo con el canje QR de hoy', async () => {
+    const id = await manual('2026-10-16', 3)
+    expect(await manual('2026-10-16', 3)).toBe(id)
+    await expect(manual('2026-10-16', 4)).rejects.toThrow('IDEMPOTENCY_KEY_REUSED')
+    expect((await deliver(3)).code).toBe('INSUFFICIENT_QUOTA')
+    expect((await deliver(2, 'qr-after-manual')).code).toBe('APPROVED')
+    await expect(manual('2026-10-16', 1, 'manual-overflow')).rejects.toThrow('INSUFFICIENT_QUOTA')
+  })
+
+  it('cambia de día a medianoche de Bogotá, entrega un QR nuevo y no arrastra saldo', async () => {
+    await deliver(2)
+    await setNow(s.db, '2026-10-17T04:59:59Z')
+    expect((await lookup()).code).toBe('EXPIRED')
+    await setNow(s.db, '2026-10-17T05:00:00Z')
+    expect(await lookup()).toMatchObject({ available: false, code: 'NOT_STARTED', company: { delivered: 0, remaining: 5 } })
+    await setNow(s.db, '2026-10-17T13:00:00Z')
+    const next = await lookup()
+    expect(next.available).toBe(true)
+    expect(next.token).not.toBe(token)
+    expect((await deliver(1, 'yesterday-at-midnight')).code).toBe('EXPIRED')
+    expect((await lookup()).company.remaining).toBe(5)
+  })
+
+  it('validar y actualizar saldo no consumen; una confirmación después del cierre se rechaza', async () => {
+    for (let i = 0; i < 3; i++) {
+      expect((await lookup()).company.delivered).toBe(0)
+      expect(await rpc(s.db, s.operator.authId, 'drink_pass_validate', { p_token: token })).toMatchObject({ code: 'VALID' })
+    }
+    expect(await one(s.db, 'select count(*)::int n from public.company_drink_deliveries')).toEqual({ n: 0 })
+    await setNow(s.db, '2026-10-17T01:00:00Z')
+    expect((await deliver(1)).code).toBe('EXPIRED')
+    expect(await one(s.db, 'select sum(delivered)::int n from public.company_drink_days')).toEqual({ n: 0 })
+  })
+
+  it('un rol que solo valida no entrega y un perfil desactivado pierde el registro manual', async () => {
+    await s.db.exec("delete from public.role_permissions where role_id = (select id from public.roles where name = 'operator') and permission_id = (select id from public.permissions where name = 'benefits:redeem')")
+    expect(await rpc(s.db, s.operator.authId, 'drink_pass_validate', { p_token: token })).toMatchObject({ code: 'VALID' })
+    await expect(deliver(1)).rejects.toThrow('FORBIDDEN')
+    await s.db.query('update public.profiles set activo = false where id = $1', [s.superAdmin.profileId])
+    await expect(manual()).rejects.toThrow()
+    expect(await one(s.db, 'select count(*)::int n from public.company_drink_deliveries')).toEqual({ n: 0 })
+  })
+
   it('correo e ID de empresa entregan el mismo pase diario sin exponer el contacto ni consumir', async () => {
     const byEmail = await lookup('email', ' EMPRESA@test.local ')
     expect(byEmail.token).toBe(token)

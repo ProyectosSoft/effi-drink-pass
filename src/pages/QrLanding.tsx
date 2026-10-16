@@ -25,7 +25,7 @@ export default function QrLanding() {
   return (
     <PublicShell>
       <EmptyState title="Pase de bebida — Feria Effix 2026" icon={<ShieldCheck className="size-12 text-brand" />}>
-        <p>Este código es un beneficio personal de bebida. Debe ser escaneado por el personal autorizado en la barra.</p>
+        <p>Este código es un pase de bebidas. Debe ser escaneado por el personal autorizado en la barra.</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <Link to="/my-benefits"><Button>Ver mis beneficios</Button></Link>
           {/* Tras el login, `next` devuelve al staff a este mismo QR para continuar al scanner. */}
