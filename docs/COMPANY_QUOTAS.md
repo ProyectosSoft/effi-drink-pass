@@ -35,7 +35,7 @@ La portada y el QR general se mantienen en las mismas direcciones. La consulta s
 
 Los asistentes y beneficios individuales previos no se convierten ni se borran. El nuevo escáner también puede leer sus QR y mantiene exactamente una bebida por pase individual. `/claim` consulta exclusivamente empresas para evitar confundir la cantidad de usuarios con un beneficio personal.
 
-El dashboard muestra un resumen de **bebidas de empresas de hoy**, separado de las estadísticas de pases individuales. Los reportes y consumos anteriores se rotulan como individuales. Las entregas de empresas se revisan en su panel; no forman parte de la API REST ni de los webhooks de consumos individuales existentes.
+El dashboard muestra un resumen de **bebidas de empresas de hoy**, separado de las estadísticas de pases individuales. Los reportes y consumos anteriores se rotulan como individuales. Las entregas de empresas se revisan en su panel y en Consumos, junto con los pases individuales. No forman parte de la API REST ni de los webhooks de consumos individuales existentes.
 
 ## Despliegue
 
@@ -54,3 +54,9 @@ La prueba de dos operadores en PostgreSQL embebido ejecuta las solicitudes suces
 Aplicar también `20261015000014_manual_company_deliveries.sql` para registrar entregas realizadas hoy o en días anteriores. En **Empresas y bebidas → Cupos y entregas por día**, seleccionar el día y usar **Registrar consumo manual** en la fila de la empresa. Se exige cantidad y motivo; el descuento corresponde al día elegido, mientras que la hora del registro y el operador quedan guardados en el historial inmutable y la auditoría.
 
 El permiso `consumptions:manual` se asigna inicialmente solo a `super_admin`; un Super Admin puede otorgarlo a otros roles desde Roles. Para usar la pantalla se necesita además `attendees:read`, y para revisar entregas, `consumptions:read`. El permiso no se puede asignar a integraciones. La carga manual respeta el saldo y la elegibilidad del día, rechaza días futuros y permite documentar días cuyo horario terminó. Los reintentos del mismo formulario no duplican el descuento; una nueva apertura es un nuevo registro y requiere revisar el historial.
+
+## Consulta unificada y orden de columnas
+
+Aplicar `20261015000015_consumption_history.sql` antes de publicar el frontend correspondiente. La vista `consumption_history` reúne los dos historiales sin copiar ni modificar consumos y conserva las políticas RLS de las tablas originales. En Consumos se filtra por tipo, día efectivo, intervalo de días e ID Effi; la fecha del registro se muestra por separado para las cargas retroactivas. Consultar entregas de empresas requiere `consumptions:read` y `attendees:read`.
+
+En Cupos y entregas por día, pulsar un encabezado alterna el orden ascendente y descendente sobre todos los resultados, antes de paginar. El filtro de día se conserva y el cambio de orden vuelve a la primera página.

@@ -12,6 +12,12 @@ import { CompanyImport } from './CompanyImport'
 type Company = CompanyInput & { id: string; active: boolean }
 type Balance = { id: string; company_id: string; event_day_id: string; effi_id: string; name: string; date: string; quota: number; delivered: number; remaining: number; eligible: boolean }
 type Delivery = { id: string; company_day_id: string; quantity: number; operator_label: string; delivered_at: string; is_manual: boolean; manual_reason: string | null }
+type BalanceSortColumn = 'name' | 'date' | 'quota' | 'delivered' | 'remaining' | 'eligible'
+const BALANCE_COLUMNS: { key: BalanceSortColumn; label: string }[] = [
+  { key: 'name', label: 'Empresa' }, { key: 'date', label: 'Día' },
+  { key: 'quota', label: 'Cupo' }, { key: 'delivered', label: 'Entregadas' },
+  { key: 'remaining', label: 'Disponibles' }, { key: 'eligible', label: 'Habilitado' },
+]
 const PAGE = 50
 
 export default function Companies() {
@@ -23,6 +29,11 @@ export default function Companies() {
   const [manual, setManual] = useState<Balance | null>(null)
   const [historyPage, setHistoryPage] = useState(1)
   const [day, setDay] = useState('')
+  const [balanceSort, setBalanceSort] = useState<{ column: BalanceSortColumn; ascending: boolean }>({ column: 'date', ascending: false })
+  const sortBalances = (column: BalanceSortColumn) => {
+    setBalanceSort((current) => ({ column, ascending: current.column === column ? !current.ascending : true }))
+    setPage(1)
+  }
   const canRead = can(P.attendeesRead)
   const [tab, setTab] = useState<'companies' | 'balances' | 'import'>(canRead ? 'companies' : 'import')
   const days = useQuery({ queryKey: ['event-days'], queryFn: async () => (await query<EventDay[]>(supabase.from('event_days').select('*').order('date'))).data })
@@ -32,9 +43,14 @@ export default function Companies() {
     placeholderData: keepPreviousData,
   })
   const balances = useQuery({
-    queryKey: ['company-balances', day, page], enabled: canRead && tab === 'balances', refetchInterval: 15_000,
+    queryKey: ['company-balances', day, page, balanceSort.column, balanceSort.ascending], enabled: canRead && tab === 'balances', refetchInterval: 15_000,
     queryFn: () => {
-      let req = supabase.from('company_drink_balances').select('*', { count: 'exact' }).order('date', { ascending: false }).order('name')
+      // Ordenar en el servidor antes de paginar; id estabiliza los empates.
+      let req = supabase.from('company_drink_balances').select('*', { count: 'exact' })
+        .order(balanceSort.column, { ascending: balanceSort.ascending })
+      if (balanceSort.column !== 'date') req = req.order('date', { ascending: false })
+      if (balanceSort.column !== 'name') req = req.order('name')
+      req = req.order('id')
       if (day) req = req.eq('event_day_id', day)
       return query<Balance[]>(req.range((page - 1) * PAGE, page * PAGE - 1))
     },
@@ -65,7 +81,16 @@ export default function Companies() {
         <Field label="Día"><Select value={day} onChange={(e) => { setDay(e.target.value); setPage(1) }}><option value="">Todos los días</option>{days.data?.map((d) => <option key={d.id} value={d.id}>{d.name} · {d.date}</option>)}</Select></Field>
         <ErrorBox error={balances.error} />{balances.isLoading && <Spinner />}
         <Button className="mt-3" variant="secondary" disabled={!balances.data?.data.length} onClick={() => downloadCsv('cupos-empresas-pagina.csv', balances.data!.data.map((b) => ({ empresa: b.name, id_effi: b.effi_id, fecha: b.date, cupo: b.quota, entregadas: b.delivered, disponibles: b.remaining })))}>CSV de esta página</Button>
-        <div className="mt-4 overflow-x-auto"><table className="table-base"><thead><tr><th>Empresa</th><th>Día</th><th>Cupo</th><th>Entregadas</th><th>Disponibles</th><th>Habilitado</th><th /></tr></thead>
+        <div className="mt-4 overflow-x-auto"><table className="table-base"><thead><tr>{BALANCE_COLUMNS.map(({ key, label }) => {
+          const selected = balanceSort.column === key
+          const nextAscending = selected ? !balanceSort.ascending : true
+          return <th key={key} aria-sort={selected ? (balanceSort.ascending ? 'ascending' : 'descending') : 'none'}>
+            <button type="button" className="inline-flex items-center gap-2 rounded px-1 py-2 text-left hover:text-brand focus-visible:outline-2 focus-visible:outline-brand"
+              onClick={() => sortBalances(key)} aria-label={`${label}: ordenar ${nextAscending ? 'ascendente' : 'descendente'}`}>
+              {label}<span aria-hidden="true">{selected ? (balanceSort.ascending ? '↑' : '↓') : '↕'}</span>
+            </button>
+          </th>
+        })}<th /></tr></thead>
           <tbody>{balances.data?.data.map((b) => <tr key={b.id}><td>{b.name}<br /><span className="text-xs text-muted">{b.effi_id}</span></td><td>{b.date}</td><td>{b.quota}</td><td>{b.delivered}</td><td>{b.remaining}</td><td>{b.eligible ? 'Sí' : 'No'}</td>
             <td>{can(P.consumptionsManual) && <Button size="sm" variant="secondary" disabled={!b.eligible || b.remaining < 1} onClick={() => setManual(b)}>Registrar consumo manual</Button>} {can(P.consumptionsRead) && <Button size="sm" variant="secondary" onClick={() => { setHistoryPage(1); setInspecting(b) }}>Ver entregas</Button>}</td></tr>)}</tbody></table></div>
         <Pagination page={page} pageSize={PAGE} total={balances.data?.count ?? 0} onPage={setPage} />
