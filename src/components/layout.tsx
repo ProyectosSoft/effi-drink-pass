@@ -62,6 +62,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   // Mientras se restaura la sesión no se decide nada, para no redirigir a /login por error.
   if (loading) return <Spinner />
   if (!session) return <Navigate to={`/login?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />
+  if (session.user.app_metadata.must_change_password && loc.pathname !== '/account') return <Navigate to="/account" replace />
   return <>{children}</>
 }
 

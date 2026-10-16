@@ -66,3 +66,4 @@ jobs:
         run: |
           supabase functions deploy api --project-ref "$PROJECT_REF" --no-verify-jwt
           supabase functions deploy webhooks --project-ref "$PROJECT_REF" --no-verify-jwt
+          supabase functions deploy password-access --project-ref "$PROJECT_REF" --no-verify-jwt

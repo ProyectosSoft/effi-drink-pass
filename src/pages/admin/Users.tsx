@@ -17,6 +17,22 @@ type UserRole = { user_id: string; role_id: string }
  */
 export default function Users() {
   const qc = useQueryClient()
+  const { access } = useAuth()
+  const [temporaryEmail, setTemporaryEmail] = useState('')
+  const [temporaryPassword, setTemporaryPassword] = useState('')
+  const [issuing, setIssuing] = useState(false)
+  const [issueError, setIssueError] = useState<unknown>(null)
+  const issuePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    if (issuing) return
+    setIssuing(true); setIssueError(null); setTemporaryPassword('')
+    try {
+      const { data, error } = await supabase.functions.invoke('password-access', { body: { action: 'temporary', email: temporaryEmail.trim() } })
+      if (error || data?.error) throw new Error(data?.error ?? 'No se pudo asignar la contraseña temporal.')
+      setTemporaryPassword(data.password)
+    } catch (err) { setIssueError(err) }
+    finally { setIssuing(false) }
+  }
   // Perfil en edición, 'new' para alta, o null con el modal cerrado.
   const [editing, setEditing] = useState<Profile | 'new' | null>(null)
   const profiles = useQuery({ queryKey: ['profiles'], queryFn: async () => (await query<Profile[]>(supabase.from('profiles').select('*').order('nombres'))).data })
@@ -27,8 +43,18 @@ export default function Users() {
 
   return (
     <div>
-      <PageHeader title="Usuarios del staff" subtitle="El staff se pre-registra por email. Al ingresar con ese email (código o contraseña) su cuenta queda vinculada."
+      <PageHeader title="Usuarios del staff" subtitle="El staff se pre-registra por email. Al ingresar con ese email y contraseña su cuenta queda vinculada."
         actions={<Button icon={<Plus className="size-4" />} onClick={() => setEditing('new')}>Nuevo usuario</Button>} />
+      {access?.roles.includes('super_admin') && <section className="card mb-4 space-y-3 p-4">
+        <h2 className="font-semibold">Contraseña temporal sin correo</h2>
+        <p className="text-sm text-muted">Para staff o asistentes registrados. Verifica la identidad de la persona antes de entregársela. Reemplaza la contraseña anterior y pide crear una personal al ingresar.</p>
+        <form onSubmit={issuePassword} className="flex flex-wrap items-end gap-3">
+          <Field label="Email registrado"><Input type="email" autoComplete="off" required value={temporaryEmail} onChange={e => { setTemporaryEmail(e.target.value); setTemporaryPassword('') }} /></Field>
+          <Button type="submit" loading={issuing}>Generar contraseña temporal</Button>
+        </form>
+        <ErrorBox error={issueError} />
+        {temporaryPassword && <div role="status" className="space-y-2"><p>Entrega esta contraseña directamente a la persona:</p><code className="block break-all select-all rounded bg-surface-2 p-3">{temporaryPassword}</code><Button variant="ghost" onClick={() => setTemporaryPassword('')}>Ocultar contraseña</Button></div>}
+      </section>}
       <ErrorBox error={profiles.error} />
       <div className="card overflow-x-auto p-2">
         {profiles.isLoading ? <Spinner /> : (

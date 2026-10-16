@@ -40,3 +40,6 @@ verify_jwt = false
 [functions.webhooks]
 # Despachador programado; se autentica con WEBHOOK_DISPATCHER_SECRET.
 verify_jwt = false
+
+[functions.password-access]
+verify_jwt = false
